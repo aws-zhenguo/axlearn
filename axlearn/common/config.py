@@ -380,6 +380,8 @@ class ConfigBase:
         return len(_attr_fields_dict_cache(type(self)))
 
     def __getattr__(self, name: str) -> Any:
+        # print("***name", name)
+        # print(type(self))
         return _attr_fields_dict_cache(type(self))[name]
 
     def keys(self) -> list[str]:

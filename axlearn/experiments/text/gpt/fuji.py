@@ -10,6 +10,7 @@ The fuji models are set up to imitate LLaMA models:
 * LLaMA 3: https://github.com/meta-llama/llama3
 """
 
+import os
 import enum
 import functools
 import itertools
@@ -206,7 +207,8 @@ def get_trainer_kwargs(
             ),
             learner_kwargs=dict(peak_lr=3e-4, weight_decay=0.1),
             max_sequence_length=max_sequence_length,
-            train_batch_size=train_batch_size,
+            # train_batch_size=train_batch_size,
+            train_batch_size=int(os.environ.get("N_GBS",16)),
             max_step=max_step,
             mesh_shape=mesh_shape_from_axes(data=-1, fsdp=8),
             mesh_rules=(
@@ -518,6 +520,7 @@ def trainer_configs(
     for version, model_size, flash_attention in itertools.product(
         Version, MODEL_SIZES, [True, False]
     ):
+        # build config for different combination of settings
         vocab_size = VOCAB_SIZE[version]
         config_name = make_config_name(
             arch=arch,

@@ -52,11 +52,13 @@ from axlearn.experiments.trainer_config_utils import TrainerConfigFn
 # Sentencepiece vocabs generated from c4/en:3.0.1.
 # See bpe_{32k,128k}.json for the sentencepiece settings.
 _SENTENCEPIECE_MODEL_NAME = {
+    # vocab size
     32 * 1024: "bpe_32k_c4.model",
     # TikToken is not yet supported, so we are using sentencepiece for now.
     # Our new grain-based inputs can support TikToken in the future.
     128256: "bpe_128k_c4.model",
 }
+# Data loader here:vs
 _train_data_mixture_components = [
     DataMixtureComponent(
         name="c4/en:3.0.1",
@@ -70,6 +72,7 @@ _train_data_mixture_components = [
 def _eval_input_sources(
     *, vocab_size: int, max_sequence_length: int
 ) -> dict[str, InstantiableConfig]:
+    # dataset name here
     return {
         name: config_for_function(tfds_input).set(
             dataset_name="c4/en:3.0.1",
@@ -93,6 +96,8 @@ def _train_input_source(*, vocab_size: int, max_sequence_length: int) -> Instant
         max_sequence_length=max_sequence_length,
         preprocessor=config_for_function(lm_text_preprocessor).set(max_padding_fraction=0.5),
     )
+    # where to get the source config from?
+    # import pdb; pdb.set_trace()
     if get_data_dir() == "FAKE":
         source_cfg.preprocessor.shuffle_buffer_size = 0
     return source_cfg

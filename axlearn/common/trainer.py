@@ -293,6 +293,7 @@ class SpmdTrainer(Module):
             if cfg.init_state_builder is not None:
                 self._add_child("init_state_builder", cfg.init_state_builder)
 
+            # get model specs
             self._model_param_specs = self.model.create_parameter_specs_recursively()
             model_param_partition_specs = jax.tree.map(
                 lambda spec: spec.mesh_axes, self._model_param_specs
@@ -556,7 +557,11 @@ class SpmdTrainer(Module):
                 output = None
                 stop_trace_step = None
 
+                for i in range(self.step):
+                    self.vlog(3, f"skipping batch for step {i}")
+                    next(self.input.batches(self._input_iter))
                 for input_batch in self.input.batches(self._input_iter):
+                    # import pdb; pdb.set_trace()
                     self._maybe_record_event(measurement.Event.START_STEP, self._step)
                     logging.log_first_n(
                         logging.INFO, "input_batch=%s", 3, utils.shapes(input_batch)
@@ -567,6 +572,7 @@ class SpmdTrainer(Module):
 
                     self._step = self._step + 1
                     self.vlog(3, "Start step %s", self.step)
+                    # register evaler
                     output = self._run_step(
                         utils.host_to_global_device_array(input_batch),
                         force_run_evals=(
@@ -852,6 +858,7 @@ class SpmdTrainer(Module):
         cfg: SpmdTrainer.Config = self.config
         # Try to restore the checkpoint at `restore_step`.
         with self.mesh():
+            # import pdb; pdb.set_trace()
             for path, spec in utils.flatten_items(self._trainer_state_specs):
                 self.vlog(1, "restore spec: %s=%s", path, spec)
             ckpt_state_spec = self._trainer_state_specs._asdict()
@@ -861,6 +868,8 @@ class SpmdTrainer(Module):
             restore_input_iter = cfg.save_input_iterator
             try:
                 # Try to restore with `input_iter`.
+                # restore checkpoint
+                # import pdb; pdb.set_trace()
                 step, ckpt_state = self.checkpointer.restore(
                     step=restore_step,
                     state=(
@@ -910,6 +919,8 @@ class SpmdTrainer(Module):
         with self.mesh():
             ckpt_state = self._trainer_state._asdict()
             if cfg.save_input_iterator:
+                # import pdb; pdb.set_trace()
+                # tensorflow.python.framework.errors_impl.FailedPreconditionError: {{function_node __wrapped__SerializeIterator_device_/job:localhost/replica:0/task:0/device:CPU:0}} SentencepieceOp is stateful. [Op:SerializeIterator] name:
                 ckpt_state["input_iter"] = self._input_iter
             self.checkpointer.save(
                 step=self.step, state=ckpt_state, evaler_summaries=evaler_summaries
@@ -1007,6 +1018,7 @@ class SpmdTrainer(Module):
 
         self.summary_writer(self.step, {"loss": outputs["loss"], **outputs["summaries"]})
         # Aggregate summaries across evalers.
+        # Run eval
         evaler_summaries = self._run_eval(
             train_summaries=outputs["summaries"], force_runs=force_run_evals
         )
@@ -1033,6 +1045,7 @@ class SpmdTrainer(Module):
         # which should be okay.
         prng_key = self._trainer_state.prng_key
         for evaler_name, evaler in self._evalers.items():
+            # run eval step
             prng_key, summaries, _ = evaler.eval_step(
                 self.step,
                 prng_key=prng_key,
