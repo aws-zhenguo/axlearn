@@ -14,7 +14,7 @@ import jax
 import numpy as np
 import torch
 from jax import numpy as jnp
-from timm.models import vision_transformer as timm_vit
+# from timm.models import vision_transformer as timm_vit
 from transformers.models.bert import modeling_bert as hf_bert
 from transformers.models.deberta_v2 import modeling_deberta_v2 as hf_deberta_v2
 from transformers.models.distilbert import modeling_distilbert as hf_distilbert
@@ -1853,35 +1853,35 @@ def _parameters_from_dit_ffn(src: torch.nn.Module):
     )
 
 
-def _parameters_from_timm_vit_attn(src: timm_vit.Attention, dst_layer: MultiheadAttention):
-    # src is a timm.models.vision_transformer.Attention layer.
-    # Therefore, we cannot directly use the existed torch_to_axlearn to convert it.
-    qkv_param = torch_to_axlearn(src.qkv)
-    q_weight, k_weight, v_weight, *_ = np.split(qkv_param["weight"], 3, axis=1)
-    weight = dict(q=q_weight, k=k_weight, v=v_weight)
-    q_bias, k_bias, v_bias, *_ = np.split(qkv_param["bias"], 3, axis=0)
-    bias = dict(q=q_bias, k=k_bias, v=v_bias)
-
-    num_heads = dst_layer.hidden_dim() // dst_layer.per_head_dim()
-    per_head_dim = dst_layer.per_head_dim()
-    i_proj = {}
-    for src_proj, dst_proj in (
-        ("q", "q_proj"),
-        ("k", "k_proj"),
-        ("v", "v_proj"),
-    ):
-        dense_params = dict(
-            weight=weight[src_proj].reshape(-1, num_heads, per_head_dim),
-            bias=bias[src_proj].reshape(num_heads, per_head_dim),
-        )
-        i_proj[dst_proj] = dense_params
-    output_dense = torch_to_axlearn(src.proj)
-    # Transpose is required for the weight and bias converter.
-    o_proj = dict(
-        weight=output_dense["weight"].transpose().reshape(-1, num_heads, per_head_dim),
-        bias=output_dense["bias"].transpose(),
-    )
-    return dict(i_proj=i_proj, o_proj=o_proj, dropout={})
+# def _parameters_from_timm_vit_attn(src: timm_vit.Attention, dst_layer: MultiheadAttention):
+#     # src is a timm.models.vision_transformer.Attention layer.
+#     # Therefore, we cannot directly use the existed torch_to_axlearn to convert it.
+#     qkv_param = torch_to_axlearn(src.qkv)
+#     q_weight, k_weight, v_weight, *_ = np.split(qkv_param["weight"], 3, axis=1)
+#     weight = dict(q=q_weight, k=k_weight, v=v_weight)
+#     q_bias, k_bias, v_bias, *_ = np.split(qkv_param["bias"], 3, axis=0)
+#     bias = dict(q=q_bias, k=k_bias, v=v_bias)
+# 
+#     num_heads = dst_layer.hidden_dim() // dst_layer.per_head_dim()
+#     per_head_dim = dst_layer.per_head_dim()
+#     i_proj = {}
+#     for src_proj, dst_proj in (
+#         ("q", "q_proj"),
+#         ("k", "k_proj"),
+#         ("v", "v_proj"),
+#     ):
+#         dense_params = dict(
+#             weight=weight[src_proj].reshape(-1, num_heads, per_head_dim),
+#             bias=bias[src_proj].reshape(num_heads, per_head_dim),
+#         )
+#         i_proj[dst_proj] = dense_params
+#     output_dense = torch_to_axlearn(src.proj)
+#     # Transpose is required for the weight and bias converter.
+#     o_proj = dict(
+#         weight=output_dense["weight"].transpose().reshape(-1, num_heads, per_head_dim),
+#         bias=output_dense["bias"].transpose(),
+#     )
+#     return dict(i_proj=i_proj, o_proj=o_proj, dropout={})
 
 
 def _parameters_from_dit_attn(src: torch.nn.Module, dst_layer: DiTAttentionLayer):
@@ -1907,10 +1907,10 @@ def _parameters_from_dit_final_layer(src: torch.nn.Module, dst_layer: DiTFinalLa
     )
 
 
-def _parameters_from_timm_vit_patch_embed(src: timm_vit.PatchEmbed):
-    return dict(
-        conv=torch_to_axlearn(src.proj),
-    )
+# def _parameters_from_timm_vit_patch_embed(src: timm_vit.PatchEmbed):
+#     return dict(
+#         conv=torch_to_axlearn(src.proj),
+#     )
 
 
 def _parameters_from_t5x_ff(src: NestedTensor, *, src_norm: NestedTensor) -> NestedTensor:
@@ -2346,7 +2346,7 @@ def _permute_q_k_for_rope(vector: torch.Tensor) -> torch.Tensor:
     return vector.reshape(n, h, d)
 
 
-def parameters_from_llama_3(llama: LlamaForCausalLM, state: dict) -> dict:
+def parameters_from_llama_3(llama: LlamaForCausalLM, state: dict, shardings) -> dict:
     """Converts llama weights from huggingface model to fuji state.
 
     The following model are supported and tested:
@@ -2364,9 +2364,10 @@ def parameters_from_llama_3(llama: LlamaForCausalLM, state: dict) -> dict:
     """
     # Copy the nested dict. No need to deep copy the data since it will be replaced.
     state = jax.tree.map(lambda x: x, state)
+    # import pdb; pdb.set_trace()
     if "lm_head" in state["decoder"]:
-        if id(llama.model.embed_tokens.weight) == id(llama.lm_head.weight):
-            raise ValueError("The embed_tokens and lm_head should not share weights.")
+        # if id(llama.model.embed_tokens.weight) == id(llama.lm_head.weight):
+        #     raise ValueError("The embed_tokens and lm_head should not share weights.")
         state["decoder"]["lm_head"]["weight"] = llama.lm_head.weight
     elif id(llama.model.embed_tokens.weight) != id(llama.lm_head.weight):
         raise ValueError("The embed_tokens and lm_head should share weights")
@@ -2431,4 +2432,50 @@ def parameters_from_llama_3(llama: LlamaForCausalLM, state: dict) -> dict:
         "scale"
     ] = torch.stack(post_attention_norm)
     state["decoder"]["output_norm"]["scale"] = llama.model.norm.weight
-    return as_tensor(state)
+    # import pdb; pdb.set_trace()
+
+    # Llama-3.1-70B
+    # state["decoder"]["emb"] = as_tensor_with_sharding(state["decoder"]["emb"], shardings[1])
+    # state["decoder"]["lm_head"] = as_tensor_with_sharding(state["decoder"]["lm_head"], shardings[2])
+    # state["decoder"]["output_norm"] = as_tensor_with_sharding(state["decoder"]["output_norm"], shardings[3])
+    # state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["linear1_0"] = as_tensor_with_sharding(state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["linear1_0"], shardings[4])
+    # state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["linear1_1"] = as_tensor_with_sharding(state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["linear1_1"], shardings[5])
+    # state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["linear2"] = as_tensor_with_sharding(state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["linear2"], shardings[6])
+    # state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["norm"] = as_tensor_with_sharding(state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["norm"], shardings[7])
+    # state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"]["attention"]["i_proj"] = as_tensor_with_sharding(state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"]["attention"]["i_proj"]["i_proj"], shardings[8])
+    # state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"]["attention"]["o_proj"] = as_tensor_with_sharding(state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"]["attention"]["o_proj"], shardings[9])
+    # state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"]["norm"] = as_tensor_with_sharding(state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"]["norm"], shardings[10])
+    return state
+    # return as_tensor(state)
+
+def parameters_from_llama_3_to_list(llama: LlamaForCausalLM, state: dict, shardings) -> dict:
+    state = parameters_from_llama_3(llama, state, shardings)
+    # import pdb; pdb.set_trace()
+    # Llama-3.2-1B
+    return [
+        as_tensor(state["decoder"]["emb"]["token_emb"]["weight"]),
+        as_tensor(state["decoder"]["output_norm"]["scale"]),
+        as_tensor(state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["linear1_0"]["weight"]),
+        as_tensor(state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["linear1_1"]["weight"]),
+        as_tensor(state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["linear2"]["weight"]),
+        as_tensor(state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["norm"]["scale"]),
+        as_tensor(state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"]["attention"]["i_proj"]["i_proj"]["qkv_proj"]["weight"]),
+        as_tensor(state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"]["attention"]["o_proj"]["weight"]),
+        as_tensor(state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"]["norm"]["scale"]),
+    ]
+import numbers
+
+def as_tensor_with_sharding(x: Any, sharding):
+    if isinstance(x, Tensor):
+        return x
+    if isinstance(x, (numbers.Number, np.ndarray)):
+        return jnp.asarray(x, device=sharding)
+    if hasattr(x, "detach"):
+        x = x.detach()
+    if hasattr(x, "numpy"):
+        return jnp.asarray(x.numpy(), device=sharding)
+    if isinstance(x, (Mapping, Sequence)):
+        return jax.tree.map(as_tensor, x)
+    raise NotImplementedError(f"{type(x)}: {x}")
+
+
