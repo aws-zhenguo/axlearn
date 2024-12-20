@@ -17,7 +17,7 @@ from axlearn.experiments import get_named_trainer_config
 from axlearn.experiments.text.common import vocab
 from axlearn.experiments.text.gpt import c4_trainer
 from axlearn.vision import image_classification, input_image, resnet
-from utils import parameters_from_llama, parameters_to_llama
+from utils import get_fuji_and_llama, parameters_from_llama, parameters_to_llama
 
 seed = 123
 # config_name = "fuji-1B-v3"
@@ -156,45 +156,10 @@ def run_inference(texts):
 
 
 def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False, reverse=False):
-    """Validate conversion between fuji and llama model."""
-    trainer_config_map = c4_trainer.named_trainer_configs()
-    trainer_config_fn = trainer_config_map[fuji_model_name]
-    trainer_config = trainer_config_fn()
-    model_config = trainer_config.model
-    model_config.set(name="fuji-test-model")
-
-    if fuji_model_name == "fuji-7B-v2":
-        # llama2 7B does not share lm_head with embedding, but fuji does
-        # need to disable lm_head sharing for fuji to match llama
-        # model_config.decoder.set(lm_head=None)
-        model_config.decoder.set(lm_head=LmHead.default_config())
-
-    # initialize transformer model
-    if load_true_model:
-        # load model to a different device to avoid OOM
-        llama = LlamaForCausalLM.from_pretrained(llama_model_name, local_files_only=True)
-    else:
-        # self-specify smaller config for easier validation
-        config = AutoConfig.from_pretrained(
-            f"{llama_model_name}_config.json",
-            local_files_only=True,
-        )
-        llama = LlamaForCausalLM._from_config(config)
-
-        # adjust num_layers to match the value in {llama_model_name}_config.json
-        model_config.decoder.transformer.set(num_layers=2)
-
-    # fuji model has different vocab size even for the same model size
-    # this only allows you to convert true llama model to fuji, the reverse is not valid for true model
-    model_config.decoder.set(vocab_size=llama.config.vocab_size)
-
-    # llama.to("cuda:2")
-    llama = llama.eval()
-
-    # initialize fuji model
-    fuji = model_config.instantiate(parent=None)
-    prng_key = jax.random.PRNGKey(0)
-    state = fuji.initialize_parameters_recursively(prng_key=prng_key)
+    """Run a forward pass and compare logits to validate conversion between fuji and llama model."""
+    fuji, state, llama = get_fuji_and_llama(
+        fuji_model_name, llama_model_name, load_true_model, reverse
+    )
 
     # generate dummy input data
     ids = jax.random.randint(jax.random.PRNGKey(123), shape=(2, 2), minval=0, maxval=12345)
@@ -259,6 +224,12 @@ def load_checkpoint(trainer_config, model):
         step, state = checkpointer.restore(state=state)
 
     return state
+
+def save_axlearn_checkpoint(model, state):
+    pass
+
+def save_transformer_checkpoint(model):
+    pass
 
 
 def get_fuji_with_llama_weights():
@@ -361,6 +332,6 @@ if __name__ == "__main__":
     # run_inference(texts)
     # generate(texts)
     # validate_conversion("fuji-1B-v3", "Llama-3.2-1B", load_true_model=True)
-    # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True)
+    validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True)
     # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=False)
-    validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=False, reverse=True)
+    # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=False, reverse=True)

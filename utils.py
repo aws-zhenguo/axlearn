@@ -213,6 +213,7 @@ def parameters_to_llama(state: dict, llama, version=2) -> dict:
 
         # convert attention layers
         if version == 3:
+            # main difference between 2 and 3 is concat and stack since 3 uses GQA
             raise Exception("Conversion for Llama3 not implemented")
         else:
             qkv = jnp.permute_dims(
@@ -257,7 +258,11 @@ def parameters_to_llama(state: dict, llama, version=2) -> dict:
     return as_torch_tensor(llama_state)
 
 
-def validate_weights(fuji_model_name, llama_model_name, load_true_model=False):
+def get_fuji_and_llama(fuji_model_name, llama_model_name, load_true_model=False, reverse=False):
+    """Get fuji and llama with configuration matched.
+
+    By default, fuji model will be modified to match llama.
+    If reverse is set to True, Llama will be modified to match fuji."""
     # Llama-2-7b-hf vs fuji-7B-v2
     trainer_config_map = c4_trainer.named_trainer_configs()
     trainer_config_fn = trainer_config_map[fuji_model_name]
@@ -265,39 +270,61 @@ def validate_weights(fuji_model_name, llama_model_name, load_true_model=False):
     model_config = trainer_config.model
     model_config.set(name="fuji-test-model")
 
-    if fuji_model_name == "fuji-7B-v2":
-        # llama2 7B does not share lm_head with embedding, but fuji does
-        # need to disable lm_head sharing for fuji to match llama
-        # model_config.decoder.set(lm_head=None)
+    if reverse:
+        # TODO if reverse, need to modify llama configuration such as vocab_size
+        if load_true_model:
+            raise Exception("Cannot load true model when modifying llama to match fuji.")
+
+        # TODO remove the line below
         model_config.decoder.set(lm_head=LmHead.default_config())
 
-    # initialize transformer model
-    if load_true_model:
-        # load model to a different device to avoid OOM
-        llama = LlamaForCausalLM.from_pretrained(llama_model_name, local_files_only=True)
-    else:
-        # self-specify smaller config for easier validation
         config = AutoConfig.from_pretrained(
             f"{llama_model_name}_config.json",
             local_files_only=True,
         )
+        config.num_hidden_layers = model_config.decoder.transformer.num_layers
+        config.vocab_size = model_config.decoder.vocab_size
         llama = LlamaForCausalLM._from_config(config)
+        llama = llama.eval()
+    else:
+        # initialize transformer model
+        if load_true_model:
+            # load model to a different device to avoid OOM
+            llama = LlamaForCausalLM.from_pretrained(llama_model_name, local_files_only=True)
+        else:
+            # self-specify smaller config for easier validation
+            config = AutoConfig.from_pretrained(
+                f"{llama_model_name}_config.json",
+                local_files_only=True,
+            )
+            llama = LlamaForCausalLM._from_config(config)
+        llama = llama.eval()
 
         # adjust num_layers to match the value in {llama_model_name}_config.json
         model_config.decoder.transformer.set(num_layers=llama.config.num_hidden_layers)
+        # fuji model has different vocab size even for the same model size
+        model_config.decoder.set(vocab_size=llama.config.vocab_size)
 
-    # fuji model has different vocab size even for the same model size
-    # this only allows you to convert true llama model to fuji, the reverse is not valid for true model
-    model_config.decoder.set(vocab_size=llama.config.vocab_size)
-
-    # llama.to("cuda:2")
-    llama = llama.eval()
+        if fuji_model_name == "fuji-7B-v2":
+            # llama2 7B does not share lm_head with embedding, but fuji does
+            # need to disable lm_head sharing for fuji to match llama
+            # model_config.decoder.set(lm_head=None)
+            model_config.decoder.set(lm_head=LmHead.default_config())
 
     # initialize fuji model
     fuji = model_config.instantiate(parent=None)
     prng_key = jax.random.PRNGKey(0)
     state = fuji.initialize_parameters_recursively(prng_key=prng_key)
 
+    # TODO can we assign and get state from fuji model so that only return models
+    return fuji, state, llama
+
+
+def validate_weights(fuji_model_name, llama_model_name, load_true_model=False, reverse=False):
+    """Validate the weights after converting from llama to axlearn, then from axlearn back to llama is still the same."""
+    fuji, state, llama = get_fuji_and_llama(
+        fuji_model_name, llama_model_name, load_true_model, reverse
+    )
     # conversion for llama2 and llama3 would be different
     # for example llama3 would use GQA and some of the model also share weights between lm_head and emb
     if llama_model_name in ["Llama-2-7b", "Llama-2-7b-hf"]:
@@ -311,16 +338,26 @@ def validate_weights(fuji_model_name, llama_model_name, load_true_model=False):
 
     for layer_name, layer_weights in original_state_dict.items():
         assert jnp.array_equal(layer_weights, llama_state_dict[layer_name])
+    print("Validation finished successfully.")
 
 
 def test_rope_conversion():
     tensor = torch.rand(4096, 32, 128)
     tensor2 = transformers_rope_to_axlearn_rope(tensor)
     tensor3 = axlearn_rope_to_transformers_rope(tensor2)
-    print(jnp.array_equal(tensor, tensor2))
-    print(jnp.array_equal(tensor, tensor3))
+    assert jnp.array_equal(tensor, tensor2)
+    assert jnp.array_equal(tensor, tensor3)
+
+
+def run_all_tests():
+    test_rope_conversion()
+    validate_weights("fuji-7B-v2", "Llama-2-7b-hf")
+    validate_weights("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True)
+    validate_weights("fuji-7B-v2", "Llama-2-7b-hf", reverse=True)
 
 
 if __name__ == "__main__":
-    validate_weights("fuji-7B-v2", "Llama-2-7b-hf")
-    validate_weights("fuji-1B-v3", "Llama-3.2-1B")
+    # validate_weights("fuji-7B-v2", "Llama-2-7b-hf")
+    # validate_weights("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True)
+    validate_weights("fuji-7B-v2", "Llama-2-7b-hf", reverse=True)
+    # validate_weights("fuji-1B-v3", "Llama-3.2-1B")
