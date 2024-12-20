@@ -1,25 +1,23 @@
 import jax
-import torch
 import numpy as np
 import seqio
 import tensorflow as tf
+import torch
+from transformers import AutoConfig, LlamaForCausalLM
+
 from axlearn.common import config, evaler, input_tf_data, measurement, utils
 from axlearn.common.config import config_for_function
+from axlearn.common.decoder import LmHead
 from axlearn.common.decoding import StopOnSubsequence
 from axlearn.common.inference import InferenceRunner
 from axlearn.common.inference_pipeline import pop_string_tensors
-from axlearn.common.input_lm import (
-    ModelType,
-    lm_text_preprocessor,
-    text2text_lm_input,
-    text_to_lm_eval_input,
-)
+from axlearn.common.input_lm import lm_text_preprocessor, text2text_lm_input, text_to_lm_eval_input
 from axlearn.common.module import functional
 from axlearn.experiments import get_named_trainer_config
 from axlearn.experiments.text.common import vocab
 from axlearn.experiments.text.gpt import c4_trainer
 from axlearn.vision import image_classification, input_image, resnet
-from utils import as_jax_tensor, as_torch_tensor, parameters_to_llama
+from utils import parameters_from_llama, parameters_to_llama
 
 seed = 123
 # config_name = "fuji-1B-v3"
@@ -117,9 +115,7 @@ def run_inference(texts):
 
     with mesh:
         model_param_specs = model.create_parameter_specs_recursively()
-        model_param_partition_specs = jax.tree.map(
-            lambda spec: spec.mesh_axes, model_param_specs
-        )
+        model_param_partition_specs = jax.tree.map(lambda spec: spec.mesh_axes, model_param_specs)
         evaler = evaler_config.instantiate(
             parent=None,
             model=model,
@@ -127,9 +123,7 @@ def run_inference(texts):
         )
         eval_input_iter = iter(evaler.input.dataset())
         prng_key = jax.random.PRNGKey(seed=1)
-        method_runner = infer_runner.create_method_runner(
-            method="predict", prng_key=prng_key
-        )
+        method_runner = infer_runner.create_method_runner(method="predict", prng_key=prng_key)
 
         for batch_ix, input_batch in enumerate(evaler.input.batches(eval_input_iter)):
             input_ids = input_batch["input_ids"].tolist()
@@ -151,9 +145,7 @@ def run_inference(texts):
             # (16, 4096, 32768)
             logits = output.output_batch["logits"]
             output_ids = jax.numpy.argmax(logits, axis=-1)
-            output_texts = sentence_piece_vocab.tokenizer.decode_ids(
-                output_ids.tolist()
-            )
+            output_texts = sentence_piece_vocab.tokenizer.decode_ids(output_ids.tolist())
             # sentence_piece_vocab.tokenizer.pad_id()  # 0
             # sentence_piece_vocab.tokenizer.eos_id()  # 1
             # sentence_piece_vocab.tokenizer.bos_id()  # -1
@@ -165,10 +157,6 @@ def run_inference(texts):
 
 def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False, reverse=False):
     """Validate conversion between fuji and llama model."""
-    from transformers import AutoConfig, LlamaForCausalLM
-    from axlearn.common.param_converter import parameters_from_llama
-    from axlearn.common.decoder import LmHead
-
     trainer_config_map = c4_trainer.named_trainer_configs()
     trainer_config_fn = trainer_config_map[fuji_model_name]
     trainer_config = trainer_config_fn()
@@ -178,7 +166,7 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
     if fuji_model_name == "fuji-7B-v2":
         # llama2 7B does not share lm_head with embedding, but fuji does
         # need to disable lm_head sharing for fuji to match llama
-        # model_config.decoder.set(lm_head=None) 
+        # model_config.decoder.set(lm_head=None)
         model_config.decoder.set(lm_head=LmHead.default_config())
 
     # initialize transformer model
@@ -195,18 +183,21 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
 
         # adjust num_layers to match the value in {llama_model_name}_config.json
         model_config.decoder.transformer.set(num_layers=2)
+
+    # fuji model has different vocab size even for the same model size
+    # this only allows you to convert true llama model to fuji, the reverse is not valid for true model
+    model_config.decoder.set(vocab_size=llama.config.vocab_size)
+
     # llama.to("cuda:2")
     llama = llama.eval()
 
     # initialize fuji model
-    fuji: Model = model_config.instantiate(parent=None)
+    fuji = model_config.instantiate(parent=None)
     prng_key = jax.random.PRNGKey(0)
     state = fuji.initialize_parameters_recursively(prng_key=prng_key)
 
     # generate dummy input data
-    ids = jax.random.randint(
-        jax.random.PRNGKey(123), shape=(2, 2), minval=0, maxval=12345
-    )
+    ids = jax.random.randint(jax.random.PRNGKey(123), shape=(2, 2), minval=0, maxval=12345)
     torch_ids = torch.from_numpy(np.asarray(ids))
 
     # conversion for llama2 and llama3 would be different
@@ -219,10 +210,9 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
     # convert params
     if reverse:
         llama_state_dict = parameters_to_llama(state, llama, version)
-        llama.load_state_dict(as_torch_tensor(llama_state_dict))
+        llama.load_state_dict(llama_state_dict)
     else:
-        state = parameters_from_llama(llama, state, None, version)
-        state = as_jax_tensor(state)
+        state = parameters_from_llama(llama, state, version)
 
     input_batch = {"input_ids": ids}
     (_, aux), _ = functional(
@@ -238,7 +228,6 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
 
     fuji_logits = np.asarray(aux["logits"])
     llama_logits = output.logits.numpy()
-    import pdb; pdb.set_trace()
 
     # The difference is caused by the SDPA attention layer. The deeper the larger the error.
     if fuji_model_name == "fuji-1B-v3":
@@ -271,32 +260,31 @@ def load_checkpoint(trainer_config, model):
 
     return state
 
+
+def get_fuji_with_llama_weights():
+    model_config = trainer_config.model
+    model_config.set(name="fuji-test-model")
+
+    if config_name == "fuji-7B-v2":
+        # llama2 7B does not share lm_head with embedding, but fuji does
+        # need to disable lm_head sharing for fuji to match llama
+        model_config.decoder.set(lm_head=LmHead.default_config())
+
+    llama = LlamaForCausalLM.from_pretrained("Llama-2-7b-hf", local_files_only=True)
+    prng_key = jax.random.PRNGKey(0)
+    model = model_config.instantiate(parent=None)
+    model_state = model.initialize_parameters_recursively(prng_key=prng_key)
+    model_state = parameters_from_llama(llama, model_state, 2)
+    return model, model_state
+
+
 def generate(texts):
     # TODO init model and load checkpoint without InferenceRunner
     # model = infer_runner.model
     # model_state = infer_runner._inference_runner_state.model
     # model_config = trainer_config.model
     # model_state = load_checkpoint()
-    from transformers import AutoConfig, LlamaForCausalLM
-    from axlearn.common.param_converter import parameters_from_llama
-    from axlearn.common.decoder import LmHead
-
-    model_config = trainer_config.model
-    model_config.set(name="fuji-test-model")
-
-    # if fuji_model_name == "fuji-7B-v2":
-        # llama2 7B does not share lm_head with embedding, but fuji does
-        # need to disable lm_head sharing for fuji to match llama
-        # model_config.decoder.set(lm_head=None) 
-        # model_config.decoder.set(lm_head=LmHead.default_config())
-    model_config.decoder.set(lm_head=LmHead.default_config())
-
-    llama = LlamaForCausalLM.from_pretrained("Llama-2-7b-hf", local_files_only=True)
-    prng_key = jax.random.PRNGKey(0)
-    model = model_config.instantiate(parent=None)
-    model_state = model.initialize_parameters_recursively(prng_key=prng_key)
-    model_state = parameters_from_llama(llama, model_state, None, 2)
-    model_state = as_jax_tensor(model_state)
+    model, model_state = get_fuji_with_llama_weights()
 
     # init tokenizer for decode
     if use_transformers:
@@ -313,17 +301,15 @@ def generate(texts):
             sentencepiece_model_name=sentencepiece_model_name, num_extra_ids=None
         )
         tokenizer = vocab_cfg.instantiate()
-        stop_decoding_condition = StopOnSubsequence(
-            [[model.decoder.config.eos_token_id]]
-        )
+        stop_decoding_condition = StopOnSubsequence([[model.decoder.config.eos_token_id]])
 
     results = list()
     batch_size, max_len = 8, 4096
     method = "sample_decode"
     # method="beam_search_decode"
-    input_ids = tokenizer.batch_encode_plus(
-        texts, padding="max_length", max_length=max_len
-    )["input_ids"]
+    input_ids = tokenizer.batch_encode_plus(texts, padding="max_length", max_length=max_len)[
+        "input_ids"
+    ]
 
     # TODO decoder batch mode
     for input_id in input_ids:
@@ -350,13 +336,9 @@ def generate(texts):
         # need to manually remove tokens after eos_token if using sample_decode
         # because it will call _decode_init and create a sequence with the length max_len
         # https://github.com/apple/axlearn/blob/main/axlearn/common/decoding.py#L790
-        batch, num, indices = jax.numpy.where(
-            output.sequences == tokenizer.eos_token_id
-        )
+        batch, num, indices = jax.numpy.where(output.sequences == tokenizer.eos_token_id)
         if indices.size > 0:
-            output_texts = tokenizer.batch_decode(
-                [output.sequences[0][0][: indices[0]]]
-            )
+            output_texts = tokenizer.batch_decode([output.sequences[0][0][: indices[0]]])
         else:
             # in case eos_token is not generated
             output_texts = tokenizer.batch_decode(output.sequences[0])
