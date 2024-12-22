@@ -6,6 +6,7 @@ import torch
 from transformers import AutoConfig, LlamaForCausalLM
 
 from axlearn.common import config, evaler, input_tf_data, measurement, utils
+from axlearn.common.checkpointer import Checkpointer
 from axlearn.common.config import config_for_function
 from axlearn.common.decoder import LmHead
 from axlearn.common.decoding import StopOnSubsequence
@@ -17,25 +18,36 @@ from axlearn.experiments import get_named_trainer_config
 from axlearn.experiments.text.common import vocab
 from axlearn.experiments.text.gpt import c4_trainer
 from axlearn.vision import image_classification, input_image, resnet
-from utils import get_fuji_and_llama, parameters_from_llama, parameters_to_llama
+from utils import (
+    seed,
+    get_fuji_and_llama,
+    load_checkpoint,
+    parameters_from_llama,
+    parameters_to_llama,
+    save_axlearn_checkpoint,
+    save_transformers_checkpoint,
+)
 
-seed = 123
 # config_name = "fuji-1B-v3"
 config_name = "fuji-7B-v2"
 
-# checkpoint_path = "/fsx/thiamha/fs/runs/artifacts/fs_main2/tg6.7b/241122003124/axlearn_out/checkpoints/step_00004000"
+# Note: Do NOT include step folder in the path, otherwise checkpointer wont be able to load the ckpt properly
+# to specify which step folder, use the step parameter
+# CHECKPOINT_PATH = "/fsx/thiamha/fs/runs/artifacts/fs_main2/tg6.7b/241122003124/axlearn_out/checkpoints"
 if config_name == "fuji-1B-v3":
-    checkpoint_path = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/test_01/11132/axlearn_out/checkpoints/step_00000006"
-    # checkpoint_path = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/test_01/11130/axlearn_out/checkpoints/step_00015000"
+    CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/test_01/11132/axlearn_out/checkpoints"
+    # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/test_01/11130/axlearn_out/checkpoints"
     sentencepiece_model_name = "bpe_128k_c4.model"
 else:
-    checkpoint_path = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000"
+    # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints"
+    CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/fuji-7B-v2"
     sentencepiece_model_name = "bpe_32k_c4.model"
 # fuji-1B-v3
-# checkpoint_path = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/trn_baselines/611/axlearn_out/checkpoints/step_00010000"
+# CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/trn_baselines/611/axlearn_out/checkpoints"
 trainer_config_fn = get_named_trainer_config(
     config_name, config_module="axlearn.experiments.text.gpt.c4_trainer"
 )
+# TODO trainer_config connot be removed for now since mesh is needed to save checkpoint
 trainer_config = trainer_config_fn()
 use_transformers = True
 
@@ -73,13 +85,18 @@ def make_ds_fn(
     return ds_fn
 
 
+def get_mesh():
+    devices = utils.create_device_mesh(mesh_shape=trainer_config.mesh_shape)
+    mesh = jax.sharding.Mesh(devices, trainer_config.mesh_axis_names)
+    return mesh
+
 def init_infer_runner():
-    # trainer_config.set(dir=checkpoint_path)
+    # trainer_config.set(dir=CHECKPOINT_PATH)
 
     devices = utils.create_device_mesh(mesh_shape=trainer_config.mesh_shape)
     mesh = jax.sharding.Mesh(devices, trainer_config.mesh_axis_names)
     infer_runner_config = InferenceRunner.config_from_trainer(trainer_config)
-    infer_runner_config.init_state_builder.set(dir=checkpoint_path)
+    infer_runner_config.init_state_builder.set(dir=CHECKPOINT_PATH)
     infer_runner = infer_runner_config.instantiate(parent=None)
     return infer_runner, infer_runner_config, mesh
 
@@ -122,7 +139,7 @@ def run_inference(texts):
             model_param_partition_specs=model_param_partition_specs,
         )
         eval_input_iter = iter(evaler.input.dataset())
-        prng_key = jax.random.PRNGKey(seed=1)
+        prng_key = jax.random.PRNGKey(seed=seed)
         method_runner = infer_runner.create_method_runner(method="predict", prng_key=prng_key)
 
         for batch_ix, input_batch in enumerate(evaler.input.batches(eval_input_iter)):
@@ -155,6 +172,14 @@ def run_inference(texts):
     return results
 
 
+def get_version(model_name):
+    if model_name in ["Llama-2-7b", "Llama-2-7b-hf"]:
+        version = 2
+    else:
+        version = 3
+    return version
+
+
 def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False, reverse=False):
     """Run a forward pass and compare logits to validate conversion between fuji and llama model."""
     fuji, state, llama = get_fuji_and_llama(
@@ -162,15 +187,12 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
     )
 
     # generate dummy input data
-    ids = jax.random.randint(jax.random.PRNGKey(123), shape=(2, 2), minval=0, maxval=12345)
+    ids = jax.random.randint(jax.random.PRNGKey(seed), shape=(2, 2), minval=0, maxval=12345)
     torch_ids = torch.from_numpy(np.asarray(ids))
 
     # conversion for llama2 and llama3 would be different
     # for example llama3 would use GQA and some of the model also share weights between lm_head and emb
-    if llama_model_name in ["Llama-2-7b", "Llama-2-7b-hf"]:
-        version = 2
-    else:
-        version = 3
+    version = get_version(llama_model_name)
 
     # convert params
     if reverse:
@@ -183,7 +205,7 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
     (_, aux), _ = functional(
         fuji,
         is_training=False,
-        prng_key=jax.random.PRNGKey(123),
+        prng_key=jax.random.PRNGKey(seed),
         state=state,
         inputs={"input_batch": input_batch, "return_aux": True},
     )
@@ -213,23 +235,29 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
     )
 
 
-def load_checkpoint(trainer_config, model):
-    if use_transformers:
-        pass
+def convert_and_save_checkpoint(
+    fuji_model_name, llama_model_name, load_true_model=True, reverse=False
+):
+    fuji, state, llama = get_fuji_and_llama(
+        fuji_model_name, llama_model_name, load_true_model=True, reverse=False
+    )
+    version = get_version(llama_model_name)
+
+    # convert params
+    if reverse:
+        llama_state_dict = parameters_to_llama(
+            state, llama, version, fuji_model_path=CHCKPOINT_PATH
+        )
+        llama.load_state_dict(llama_state_dict)
+        checkpoint_path = f"/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/{llama_model_name}"
+        save_transformer_checkpoint(llama)
     else:
-        checkpointer_config = trainer_config.cehckpointer
-        checkpointer_config.dir = checkpoint_path
-        checkpointer = checkpointer_config.instantiate(parent=None)
-        state = model.initialize_parameters_recursively(prng_key=prng_key)
-        step, state = checkpointer.restore(state=state)
+        state = parameters_from_llama(llama, state, version)
+        checkpoint_path = f"/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/{fuji_model_name}"
 
-    return state
+        save_axlearn_checkpoint(fuji, state, checkpoint_path, get_mesh())
 
-def save_axlearn_checkpoint(model, state):
-    pass
-
-def save_transformer_checkpoint(model):
-    pass
+    print(f"Successfuly save checkpoint to {checkpoint_path}.")
 
 
 def get_fuji_with_llama_weights():
@@ -242,7 +270,7 @@ def get_fuji_with_llama_weights():
         model_config.decoder.set(lm_head=LmHead.default_config())
 
     llama = LlamaForCausalLM.from_pretrained("Llama-2-7b-hf", local_files_only=True)
-    prng_key = jax.random.PRNGKey(0)
+    prng_key = jax.random.PRNGKey(seed)
     model = model_config.instantiate(parent=None)
     model_state = model.initialize_parameters_recursively(prng_key=prng_key)
     model_state = parameters_from_llama(llama, model_state, 2)
@@ -253,34 +281,62 @@ def generate(texts):
     # TODO init model and load checkpoint without InferenceRunner
     # model = infer_runner.model
     # model_state = infer_runner._inference_runner_state.model
-    # model_config = trainer_config.model
-    # model_state = load_checkpoint()
-    model, model_state = get_fuji_with_llama_weights()
+    results = list()
+    batch_size, max_len = 8, 4096
 
     # init tokenizer for decode
     if use_transformers:
+        # model, model_state = get_fuji_with_llama_weights()
+        model_config = trainer_config.model
+        model_config.set(name="fuji-eval-model")
+        # TODO remove the following two lines
+        # model_config.decoder.set(lm_head=LmHead.default_config())
+        # model_config.decoder.set(vocab_size=32000)
+
+        model = model_config.instantiate(parent=None)
+        model_state = load_checkpoint(model, CHECKPOINT_PATH, get_mesh())
+
         # update pad_token_id since they are different in fuji and llama
         tokenizer = get_transformers_tokenizer()
         pad_token_id = model.config.decoder.pad_token_id
         tokenizer.pad_token_id = pad_token_id
+        eos_token_id = tokenizer.eos_token_id
 
         # Fuji models use different eos_token_id than llama models
         # fuji eos_token_id = 0, llama eos_token_id = 128001 (llama3.2 1B)
         stop_decoding_condition = StopOnSubsequence([[tokenizer.eos_token_id]])
+
+        input_ids = tokenizer.batch_encode_plus(texts, padding="max_length", max_length=max_len)[
+            "input_ids"
+        ]
     else:
+        model_config = trainer_config.model
+        model_config.set(name="fuji-eval-model")
+        # TODO remove the following two lines
+        model_config.decoder.set(lm_head=LmHead.default_config())
+
+        model = model_config.instantiate(parent=None)
+        model_state = load_checkpoint(model, CHECKPOINT_PATH, get_mesh())
+
         vocab_cfg = config_for_function(vocab).set(
             sentencepiece_model_name=sentencepiece_model_name, num_extra_ids=None
         )
         tokenizer = vocab_cfg.instantiate()
+        eos_token_id = tokenizer.eos_id
         stop_decoding_condition = StopOnSubsequence([[model.decoder.config.eos_token_id]])
 
-    results = list()
-    batch_size, max_len = 8, 4096
+        input_ids = tokenizer.encode(texts)
+
+        # add padding
+        def pad_list(l, max_len, fill_value=tokenizer.pad_id):
+            return l + [fill_value] * (max_len - len(l))
+
+        input_ids = [pad_list(ids, max_len) for ids in input_ids]
+        # input_ids = np.pad(input_ids, ((0, 0),(0, max_len)), "constant", constant_values=0)
+
     method = "sample_decode"
     # method="beam_search_decode"
-    input_ids = tokenizer.batch_encode_plus(texts, padding="max_length", max_length=max_len)[
-        "input_ids"
-    ]
+    # import pdb; pdb.set_trace()
 
     # TODO decoder batch mode
     for input_id in input_ids:
@@ -296,6 +352,7 @@ def generate(texts):
         # TODO add mask for batch running https://github.com/apple/axlearn/blob/a15a3bcbb976c14db157a8958df368a48c614c1f/axlearn/common/decoder_test.py#L563C13-L563C24
 
         # TODO how to get model states with invocation context without using infer_runner? https://github.com/apple/axlearn/blob/a15a3bcbb976c14db157a8958df368a48c614c1f/axlearn/experiments/text/gpt/param_converter_test.py#L105
+        # TODO the decoding process does not seem to start from the last token, but start from the first token when testing with axlearn model
         output, _ = functional(
             model,
             is_training=False,
@@ -307,14 +364,20 @@ def generate(texts):
         # need to manually remove tokens after eos_token if using sample_decode
         # because it will call _decode_init and create a sequence with the length max_len
         # https://github.com/apple/axlearn/blob/main/axlearn/common/decoding.py#L790
-        batch, num, indices = jax.numpy.where(output.sequences == tokenizer.eos_token_id)
+        batch, num, indices = jax.numpy.where(output.sequences == eos_token_id)
+        if use_transformers:
+            decode_fn = tokenizer.batch_decode
+        else:
+            decode_fn = tokenizer.decode
+
         if indices.size > 0:
-            output_texts = tokenizer.batch_decode([output.sequences[0][0][: indices[0]]])
+            output_texts = decode_fn([output.sequences[0][0][: indices[0]]])
         else:
             # in case eos_token is not generated
-            output_texts = tokenizer.batch_decode(output.sequences[0])
+            output_texts = decode_fn(output.sequences[0][0])
+        import pdb; pdb.set_trace()
         print(output_texts)
-        results.extend(output_texts)
+        results.extend([output_texts])
     return results
 
 
@@ -330,8 +393,10 @@ if __name__ == "__main__":
         "California is a state in",
     ]
     # run_inference(texts)
-    # generate(texts)
+    generate(texts)
     # validate_conversion("fuji-1B-v3", "Llama-3.2-1B", load_true_model=True)
-    validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True)
+    # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True)
     # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=False)
     # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=False, reverse=True)
+    # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=False)
+    # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True)

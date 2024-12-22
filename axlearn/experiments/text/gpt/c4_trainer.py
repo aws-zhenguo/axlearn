@@ -54,6 +54,7 @@ from axlearn.experiments.trainer_config_utils import TrainerConfigFn
 _SENTENCEPIECE_MODEL_NAME = {
     # vocab size
     32 * 1024: "bpe_32k_c4.model",
+    32000: "bpe_32k_c4.model",
     # TikToken is not yet supported, so we are using sentencepiece for now.
     # Our new grain-based inputs can support TikToken in the future.
     128256: "bpe_128k_c4.model",

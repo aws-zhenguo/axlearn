@@ -9,8 +9,41 @@ import torch
 from jax import numpy as jnp
 from transformers import AutoConfig, LlamaForCausalLM
 
+from axlearn.common.checkpointer import Checkpointer
 from axlearn.common.decoder import LmHead
 from axlearn.experiments.text.gpt import c4_trainer
+
+
+seed = 123
+
+def get_checkpointer(checkpoint_path):
+    checkpointer_config = Checkpointer.default_config()
+    checkpointer_config.dir = checkpoint_path or CHECKPOINT_PATH
+    checkpointer_config.name = "checkpointer"
+    checkpointer = checkpointer_config.instantiate(parent=None)
+    return checkpointer
+
+
+def load_checkpoint(model, checkpoint_path, mesh, step=None):
+    # checkpointer_config = trainer_config.cehckpointer
+    with mesh:
+        checkpointer = get_checkpointer(checkpoint_path)
+
+        prng_key = jax.random.PRNGKey(seed)
+        state = model.initialize_parameters_recursively(prng_key=prng_key)
+        step, state = checkpointer.restore(state=state, step=step)
+
+        return state
+
+
+def save_axlearn_checkpoint(model, state, checkpoint_path, mesh):
+    with mesh:
+        checkpointer = get_checkpointer(checkpoint_path)
+        checkpointer.save(step=22794, state=state)
+
+
+def save_transformers_checkpoint(model, checkpoint_path):
+    model.save_pretrained(checkpoint_path)
 
 
 def as_jax_tensor(x: Any):
@@ -258,11 +291,20 @@ def parameters_to_llama(state: dict, llama, version=2) -> dict:
     return as_torch_tensor(llama_state)
 
 
-def get_fuji_and_llama(fuji_model_name, llama_model_name, load_true_model=False, reverse=False):
+def get_fuji_and_llama(
+    fuji_model_name,
+    llama_model_name,
+    load_true_model=False,
+    reverse=False,
+    fuji_model_path=None,
+    llama_model_path=None,
+):
     """Get fuji and llama with configuration matched.
 
     By default, fuji model will be modified to match llama.
     If reverse is set to True, Llama will be modified to match fuji."""
+    llama_model_path = llama_model_path or llama_model_name
+
     # Llama-2-7b-hf vs fuji-7B-v2
     trainer_config_map = c4_trainer.named_trainer_configs()
     trainer_config_fn = trainer_config_map[fuji_model_name]
@@ -271,13 +313,16 @@ def get_fuji_and_llama(fuji_model_name, llama_model_name, load_true_model=False,
     model_config.set(name="fuji-test-model")
 
     if reverse:
-        # TODO if reverse, need to modify llama configuration such as vocab_size
-        if load_true_model:
-            raise Exception("Cannot load true model when modifying llama to match fuji.")
-
         # TODO remove the line below
         model_config.decoder.set(lm_head=LmHead.default_config())
 
+        # initialize fuji model
+        fuji = model_config.instantiate(parent=None)
+        prng_key = jax.random.PRNGKey(0)
+        state = fuji.initialize_parameters_recursively(prng_key=prng_key)
+        state = load_checkpoint(fuji, fuji_model_path)
+
+        # initialize llama model
         config = AutoConfig.from_pretrained(
             f"{llama_model_name}_config.json",
             local_files_only=True,
@@ -303,18 +348,19 @@ def get_fuji_and_llama(fuji_model_name, llama_model_name, load_true_model=False,
         # adjust num_layers to match the value in {llama_model_name}_config.json
         model_config.decoder.transformer.set(num_layers=llama.config.num_hidden_layers)
         # fuji model has different vocab size even for the same model size
-        model_config.decoder.set(vocab_size=llama.config.vocab_size)
+        # model_config.decoder.set(vocab_size=llama.config.vocab_size)
 
         if fuji_model_name == "fuji-7B-v2":
             # llama2 7B does not share lm_head with embedding, but fuji does
             # need to disable lm_head sharing for fuji to match llama
             # model_config.decoder.set(lm_head=None)
-            model_config.decoder.set(lm_head=LmHead.default_config())
+            # model_config.decoder.set(lm_head=LmHead.default_config())
+            pass
 
-    # initialize fuji model
-    fuji = model_config.instantiate(parent=None)
-    prng_key = jax.random.PRNGKey(0)
-    state = fuji.initialize_parameters_recursively(prng_key=prng_key)
+        # initialize fuji model
+        fuji = model_config.instantiate(parent=None)
+        prng_key = jax.random.PRNGKey(0)
+        state = fuji.initialize_parameters_recursively(prng_key=prng_key)
 
     # TODO can we assign and get state from fuji model so that only return models
     return fuji, state, llama

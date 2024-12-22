@@ -67,7 +67,8 @@ class Version(enum.Enum):
 # Mapping from Fuji versions to vocab sizes.
 VOCAB_SIZE = {
     Version.V1: 32 * 1024,
-    Version.V2: 32 * 1024,
+    # Version.V2: 32 * 1024,
+    Version.V2: 32000,
     Version.V3: 128256,
 }
 
@@ -195,6 +196,8 @@ def get_trainer_kwargs(
             mesh_shape=mesh_shape_from_axes(data=-1, fsdp=8),
         )
     elif model_size == "7B":
+        # import pdb; pdb.set_trace()
+        # Llama3 and Llama2 70B uses GQA, but Llama2 7B does not
         trainer_kwargs = dict(
             model_kwargs=dict(
                 num_layers=32,
@@ -202,7 +205,7 @@ def get_trainer_kwargs(
                 num_heads=32,
                 num_kv_heads=num_kv_heads,
                 rope_theta=rope_theta,
-                shared_lm_head=True,
+                shared_lm_head=False,
                 flash_attention=flash_attention,
             ),
             learner_kwargs=dict(peak_lr=3e-4, weight_decay=0.1),
