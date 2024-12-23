@@ -22,26 +22,30 @@ from utils import (
     seed,
     get_fuji_and_llama,
     load_checkpoint,
+    get_mesh,
     parameters_from_llama,
     parameters_to_llama,
     save_axlearn_checkpoint,
     save_transformers_checkpoint,
+    copy_tokenizer_files,
 )
 
 # config_name = "fuji-1B-v3"
 config_name = "fuji-7B-v2"
 
-# Note: Do NOT include step folder in the path, otherwise checkpointer wont be able to load the ckpt properly
-# to specify which step folder, use the step parameter
+# Note: step folder need to be included for inference runner but not for checkpointer
+# to specify step folder for checkpointer, use the step parameter
 # CHECKPOINT_PATH = "/fsx/thiamha/fs/runs/artifacts/fs_main2/tg6.7b/241122003124/axlearn_out/checkpoints"
 if config_name == "fuji-1B-v3":
     CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/test_01/11132/axlearn_out/checkpoints"
     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/test_01/11130/axlearn_out/checkpoints"
     sentencepiece_model_name = "bpe_128k_c4.model"
 else:
+    # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000"
     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints"
-    CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/fuji-7B-v2"
+    CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/fuji-7B-v2/step_00022794"
     sentencepiece_model_name = "bpe_32k_c4.model"
+    converted_tokenizer_path = "ConvertedTokenizer"
 # fuji-1B-v3
 # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/trn_baselines/611/axlearn_out/checkpoints"
 trainer_config_fn = get_named_trainer_config(
@@ -85,23 +89,6 @@ def make_ds_fn(
     return ds_fn
 
 
-def get_mesh():
-    devices = utils.create_device_mesh(mesh_shape=trainer_config.mesh_shape)
-    mesh = jax.sharding.Mesh(devices, trainer_config.mesh_axis_names)
-    return mesh
-
-def init_infer_runner():
-    # trainer_config.set(dir=CHECKPOINT_PATH)
-
-    devices = utils.create_device_mesh(mesh_shape=trainer_config.mesh_shape)
-    mesh = jax.sharding.Mesh(devices, trainer_config.mesh_axis_names)
-    infer_runner_config = InferenceRunner.config_from_trainer(trainer_config)
-    infer_runner_config.init_state_builder.set(dir=CHECKPOINT_PATH)
-    infer_runner = infer_runner_config.instantiate(parent=None)
-    return infer_runner, infer_runner_config, mesh
-
-
-# infer_runner, infer_runner_config, mesh = init_infer_runner()
 
 
 def run_inference(texts):
@@ -236,26 +223,29 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
 
 
 def convert_and_save_checkpoint(
-    fuji_model_name, llama_model_name, load_true_model=True, reverse=False
+    fuji_model_name, llama_model_name, load_true_model=True, reverse=False, fuji_model_path=None
 ):
     fuji, state, llama = get_fuji_and_llama(
-        fuji_model_name, llama_model_name, load_true_model=True, reverse=False
+        fuji_model_name, llama_model_name, load_true_model=load_true_model, reverse=reverse, fuji_model_path=fuji_model_path
     )
     version = get_version(llama_model_name)
 
     # convert params
     if reverse:
         llama_state_dict = parameters_to_llama(
-            state, llama, version, fuji_model_path=CHCKPOINT_PATH
+            state, llama, version
         )
         llama.load_state_dict(llama_state_dict)
         checkpoint_path = f"/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/{llama_model_name}"
-        save_transformer_checkpoint(llama)
+        save_transformers_checkpoint(llama, checkpoint_path)
+        # Seems spm and transformers tokenizers are not matching
+        # copy_tokenizer_files(converted_tokenizer_path, checkpoint_path)
+        # Remember to copy the generation_config.json to checkpoint folder to get similar results
     else:
         state = parameters_from_llama(llama, state, version)
         checkpoint_path = f"/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/{fuji_model_name}"
 
-        save_axlearn_checkpoint(fuji, state, checkpoint_path, get_mesh())
+        save_axlearn_checkpoint(fuji, state, checkpoint_path, get_mesh(trainer_config))
 
     print(f"Successfuly save checkpoint to {checkpoint_path}.")
 
@@ -288,13 +278,13 @@ def generate(texts):
     if use_transformers:
         # model, model_state = get_fuji_with_llama_weights()
         model_config = trainer_config.model
-        model_config.set(name="fuji-eval-model")
+        model_config.set(name="model")
         # TODO remove the following two lines
         # model_config.decoder.set(lm_head=LmHead.default_config())
         # model_config.decoder.set(vocab_size=32000)
 
         model = model_config.instantiate(parent=None)
-        model_state = load_checkpoint(model, CHECKPOINT_PATH, get_mesh())
+        model_state = load_checkpoint(trainer_config, CHECKPOINT_PATH)
 
         # update pad_token_id since they are different in fuji and llama
         tokenizer = get_transformers_tokenizer()
@@ -311,12 +301,13 @@ def generate(texts):
         ]
     else:
         model_config = trainer_config.model
-        model_config.set(name="fuji-eval-model")
+        model_config.set(name="model")
         # TODO remove the following two lines
-        model_config.decoder.set(lm_head=LmHead.default_config())
+        # model_config.decoder.set(lm_head=LmHead.default_config())
+        # model_config.decoder.set(lm_head=None)
 
         model = model_config.instantiate(parent=None)
-        model_state = load_checkpoint(model, CHECKPOINT_PATH, get_mesh())
+        model_state = load_checkpoint(trainer_config, CHECKPOINT_PATH)
 
         vocab_cfg = config_for_function(vocab).set(
             sentencepiece_model_name=sentencepiece_model_name, num_extra_ids=None
@@ -326,6 +317,7 @@ def generate(texts):
         stop_decoding_condition = StopOnSubsequence([[model.decoder.config.eos_token_id]])
 
         input_ids = tokenizer.encode(texts)
+        # TODO the inference for fuji model seem to be broken
 
         # add padding
         def pad_list(l, max_len, fill_value=tokenizer.pad_id):
@@ -368,7 +360,7 @@ def generate(texts):
         if use_transformers:
             decode_fn = tokenizer.batch_decode
         else:
-            decode_fn = tokenizer.decode
+            decode_fn = tokenizer.tokenizer.decode
 
         if indices.size > 0:
             output_texts = decode_fn([output.sequences[0][0][: indices[0]]])
@@ -399,4 +391,4 @@ if __name__ == "__main__":
     # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=False)
     # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=False, reverse=True)
     # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=False)
-    # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True)
+    # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True, fuji_model_path=CHECKPOINT_PATH)

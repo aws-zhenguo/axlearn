@@ -1,3 +1,4 @@
+import os
 import numbers
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
@@ -8,13 +9,36 @@ import numpy as np
 import torch
 from jax import numpy as jnp
 from transformers import AutoConfig, LlamaForCausalLM
+from axlearn.common import config, evaler, input_tf_data, measurement, utils
 
-from axlearn.common.checkpointer import Checkpointer
+from axlearn.common.checkpointer import Checkpointer, CheckpointValidationType
 from axlearn.common.decoder import LmHead
 from axlearn.experiments.text.gpt import c4_trainer
+from axlearn.common.inference import InferenceRunner, _InferenceRunnerState
+from axlearn.common.utils import (
+    PartitionSpec,
+    TensorSpec,
+)
 
 
 seed = 123
+
+
+def get_mesh(trainer_config):
+    devices = utils.create_device_mesh(mesh_shape=trainer_config.mesh_shape)
+    mesh = jax.sharding.Mesh(devices, trainer_config.mesh_axis_names)
+    return mesh
+
+def init_infer_runner(trainer_config, checkpoint_path):
+    # trainer_config.set(dir=CHECKPOINT_PATH)
+
+    devices = utils.create_device_mesh(mesh_shape=trainer_config.mesh_shape)
+    infer_runner_config = InferenceRunner.config_from_trainer(trainer_config)
+    infer_runner_config.init_state_builder.set(dir=checkpoint_path)
+    infer_runner = infer_runner_config.instantiate(parent=None)
+    return infer_runner, infer_runner_config
+
+
 
 def get_checkpointer(checkpoint_path):
     checkpointer_config = Checkpointer.default_config()
@@ -24,26 +48,54 @@ def get_checkpointer(checkpoint_path):
     return checkpointer
 
 
-def load_checkpoint(model, checkpoint_path, mesh, step=None):
-    # checkpointer_config = trainer_config.cehckpointer
-    with mesh:
-        checkpointer = get_checkpointer(checkpoint_path)
+# Note: it is ok to use checkpointer to load checkpoint directly
+# but need to be careful abou the checkpoint file structure
+# if the checkpoint is created by trainer, then it will be structured as following
+# step_00034000
+#   - gda
+#       - learner
+#       - model
+#       - prng_key
+# if the checkpoint is create by running checkpointer.save on the model state, it will nto have learner and prng_key
+# step_00022794
+#   - gda
+#       - decoder
+# to keep them consitent, wrap model state in a _InferenceRunnerState
+def load_checkpoint(trainer_config, checkpoint_path, step=None):
+    # checkpointer = get_checkpointer(checkpoint_path)
+    inference_runner, _ = init_infer_runner(trainer_config, checkpoint_path)
+    model_state = inference_runner._inference_runner_state.model
+    return model_state
 
-        prng_key = jax.random.PRNGKey(seed)
-        state = model.initialize_parameters_recursively(prng_key=prng_key)
-        step, state = checkpointer.restore(state=state, step=step)
+    # prng_key = jax.random.PRNGKey(seed)
+    # state = model.initialize_parameters_recursively(prng_key=prng_key)
+    # step, state = checkpointer.restore(state=state, step=step)
 
-        return state
+    # return state
 
 
 def save_axlearn_checkpoint(model, state, checkpoint_path, mesh):
     with mesh:
         checkpointer = get_checkpointer(checkpoint_path)
-        checkpointer.save(step=22794, state=state)
+        inference_runner_state = _InferenceRunnerState(
+            # prng_key=TensorSpec(dtype=jnp.uint32, shape=[4], mesh_axes=PartitionSpec(None)),
+            # the actual value does not matter since this is just to save the checkpoint in trainer format
+            prng_key=jnp.asarray([ 744862133, 117316191,  744862143, 1173516191], dtype=jnp.uint32),
+            model=state,
+        )._asdict()
+        checkpointer.save(step=22794, state=inference_runner_state)
 
 
 def save_transformers_checkpoint(model, checkpoint_path):
     model.save_pretrained(checkpoint_path)
+
+
+def copy_tokenizer_files(src, dst):
+    for file_name in os.listdir():
+        src_file = os.path.join(src, file_name)
+        dst_file = os.path.join(dst, file_name)
+        shutil.copy(src_file, dst_file)
+        print(f"Copied {src_file} to {dst_file}")
 
 
 def as_jax_tensor(x: Any):
@@ -310,17 +362,20 @@ def get_fuji_and_llama(
     trainer_config_fn = trainer_config_map[fuji_model_name]
     trainer_config = trainer_config_fn()
     model_config = trainer_config.model
-    model_config.set(name="fuji-test-model")
+    model_config.set(name="model")
 
     if reverse:
+        if fuji_model_path is None:
+            raise Exception("fuji_model_path need to be specified to load the checkpoint")
+
         # TODO remove the line below
-        model_config.decoder.set(lm_head=LmHead.default_config())
+        # model_config.decoder.set(lm_head=LmHead.default_config())
 
         # initialize fuji model
         fuji = model_config.instantiate(parent=None)
         prng_key = jax.random.PRNGKey(0)
         state = fuji.initialize_parameters_recursively(prng_key=prng_key)
-        state = load_checkpoint(fuji, fuji_model_path)
+        state = load_checkpoint(trainer_config, fuji_model_path)
 
         # initialize llama model
         config = AutoConfig.from_pretrained(
