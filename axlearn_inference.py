@@ -45,10 +45,10 @@ if config_name == "fuji-1B-v3":
     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/test_01/11130/axlearn_out/checkpoints"
     sentencepiece_model_name = "bpe_128k_c4.model"
 elif config_name == "fuji-7B-v2":
-    # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000"
+    CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000"
     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints"
     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/fuji-7B-v2/step_00022794"
-    CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/round_trip/step_00022794"
+    # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/round_trip/step_00022794"
     sentencepiece_model_name = "bpe_32k_c4.model"
     converted_tokenizer_path = "ConvertedTokenizer"
 else:
@@ -168,11 +168,10 @@ def run_inference(texts):
 
 
 def get_version(model_name):
-    if model_name in ["Llama-2-7b", "Llama-2-7b-hf"]:
-        version = 2
+    if "Llama-3" in model_name:
+        return 3
     else:
-        version = 3
-    return version
+        return 2
 
 
 def get_sentence_piece_tokenizer():
@@ -220,19 +219,43 @@ def get_top_p(x, p):
             break
     return top_values
 
+
+def get_top_p_indices(x, x_indices, p):
+    total = 0.0
+    top_p_indices = list()
+    for idx in x_indices:
+        total += x[idx]
+        top_p_indices.append(idx)
+        if total > p:
+            break
+    return top_p_indices
+
+
+def ndarray_apply_order(x, indices):
+    # x[indices] does not work for ndarray with dimension higher than 2
+    # since different indices need to be applied on different array
+    result = list()
+    for i, seq in enumerate(x):
+        new_seq = list()
+        for j, tokens in enumerate(seq):
+            new_seq.append(tokens[indices[i][j]])
+        result.append(new_seq)
+    return np.asarray(result)
+
+
 def assert_top_p_allclose(x, y, p=0.99):
-    x = np.sort(x, axis=-1)[:,:,::-1]
-    y = np.sort(y, axis=-1)[:,:,::-1]
+    # x = np.sort(x, axis=-1)[:,:,::-1]
+    # y = np.sort(y, axis=-1)[:,:,::-1]
+    x_indices = np.argsort(x, axis=-1)[:,:,::-1]
 
     top_x_flat = list()
     top_y_flat = list()
-    for x_seq, y_seq in zip(x, y):
-        for x_token, y_token in zip(x_seq, y_seq):
-            top_x = get_top_p(x_token, p)
-            top_y = get_top_p(y_token, p)
+    for i, (x_seq, y_seq) in enumerate(zip(x, y)):
+        for j, (x_token, y_token) in enumerate(zip(x_seq, y_seq)):
+            top_p_indices = get_top_p_indices(x_token, x_indices[i][j], p)
+            top_x = x_token[top_p_indices]
+            top_y = y_token[top_p_indices]
 
-            top_x = top_x[:min(len(top_x), len(top_y))]
-            top_y = top_y[:min(len(top_x), len(top_y))]
             top_x_flat.extend(top_x)
             top_y_flat.extend(top_y)
 
@@ -246,12 +269,13 @@ def assert_top_p_allclose(x, y, p=0.99):
 
     assert np.allclose(top_x, top_y, atol=1e-3, rtol=1e-2)
 
-def assert_top_k_allclose(x, y, k=64):
-    x = np.sort(x, axis=-1)[:,:,::-1]
-    y = np.sort(y, axis=-1)[:,:,::-1]
 
-    top_x = x[:,:,:k]
-    top_y = y[:,:,:k]
+def assert_top_k_allclose(x, y, k=64):
+    x_indices = np.argsort(x, axis=-1)[:,:,::-1]
+    top_x = ndarray_apply_order(x, x_indices)[:,:,:k]
+    top_y = ndarray_apply_order(y, x_indices)[:,:,:k]
+    # x = np.sort(x, axis=-1)[:,:,::-1]
+    # y = np.sort(y, axis=-1)[:,:,::-1]
 
     rdiff = relative_difference(top_x, top_y)
     print("max top k difference", np.max(top_x - top_y))
