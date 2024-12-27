@@ -281,6 +281,9 @@ def parameters_to_llama(state: dict, llama, version=2) -> dict:
 
     if "lm_head" in state["decoder"]:
         llama_state["lm_head.weight"] = state["decoder"]["lm_head"]["weight"]
+    else:
+        # if fuji has no lm_head, should share the weights with embed
+        llama_state["lm_head.weight"] = state["decoder"]["emb"]["token_emb"]["weight"]
 
     llama_state["model.embed_tokens.weight"] = state["decoder"]["emb"]["token_emb"]["weight"]
 
@@ -365,9 +368,6 @@ def get_fuji_and_llama(
     model_config.set(name="model")
 
     if reverse:
-        if fuji_model_path is None:
-            raise Exception("fuji_model_path need to be specified to load the checkpoint")
-
         # TODO remove the line below
         # model_config.decoder.set(lm_head=LmHead.default_config())
 
@@ -375,7 +375,10 @@ def get_fuji_and_llama(
         fuji = model_config.instantiate(parent=None)
         prng_key = jax.random.PRNGKey(0)
         state = fuji.initialize_parameters_recursively(prng_key=prng_key)
-        state = load_checkpoint(trainer_config, fuji_model_path)
+        if load_true_model:
+            if fuji_model_path is None:
+                raise Exception("fuji_model_path not provided!")
+            state = load_checkpoint(trainer_config, fuji_model_path)
 
         # initialize llama model
         config = AutoConfig.from_pretrained(
@@ -384,8 +387,10 @@ def get_fuji_and_llama(
         )
         config.num_hidden_layers = model_config.decoder.transformer.num_layers
         config.vocab_size = model_config.decoder.vocab_size
+        config.eos_token_id = model_config.decoder.eos_token_id
+        config.bos_token_id = -1
         llama = LlamaForCausalLM._from_config(config)
-        llama = llama.eval()
+        # llama = llama.eval()
     else:
         # initialize transformer model
         if load_true_model:
