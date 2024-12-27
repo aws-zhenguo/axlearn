@@ -5,6 +5,8 @@ import tensorflow as tf
 import torch
 from transformers import AutoConfig, LlamaForCausalLM
 
+from collections import defaultdict
+from jax import numpy as jnp
 from axlearn.common import config, evaler, input_tf_data, measurement, utils
 from axlearn.common.checkpointer import Checkpointer
 from axlearn.common.config import config_for_function
@@ -28,10 +30,12 @@ from utils import (
     save_axlearn_checkpoint,
     save_transformers_checkpoint,
     copy_tokenizer_files,
+    init_infer_runner,
 )
 
 # config_name = "fuji-1B-v3"
 config_name = "fuji-7B-v2"
+# config_name = "fuji-70B-v2"
 
 # Note: step folder need to be included for inference runner but not for checkpointer
 # to specify step folder for checkpointer, use the step parameter
@@ -40,20 +44,23 @@ if config_name == "fuji-1B-v3":
     CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/test_01/11132/axlearn_out/checkpoints"
     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/test_01/11130/axlearn_out/checkpoints"
     sentencepiece_model_name = "bpe_128k_c4.model"
-else:
+elif config_name == "fuji-7B-v2":
     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000"
     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints"
-    CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/fuji-7B-v2/step_00022794"
+    # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/fuji-7B-v2/step_00022794"
+    CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/round_trip/step_00022794"
     sentencepiece_model_name = "bpe_32k_c4.model"
     converted_tokenizer_path = "ConvertedTokenizer"
-# fuji-1B-v3
-# CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/trn_baselines/611/axlearn_out/checkpoints"
+else:
+    CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/trn_baselines/611/axlearn_out/checkpoints/step_00010000"
+    sentencepiece_model_name = "bpe_32k_c4.model"
+    converted_tokenizer_path = "ConvertedTokenizer"
 trainer_config_fn = get_named_trainer_config(
     config_name, config_module="axlearn.experiments.text.gpt.c4_trainer"
 )
 # TODO trainer_config connot be removed for now since mesh is needed to save checkpoint
 trainer_config = trainer_config_fn()
-use_transformers = True
+use_transformers = False
 
 
 def get_transformers_tokenizer():
@@ -89,9 +96,9 @@ def make_ds_fn(
     return ds_fn
 
 
-
-
 def run_inference(texts):
+    infer_runner, infer_runner_config = init_infer_runner(trainer_config, CHECKPOINT_PATH)
+    mesh = get_mesh(trainer_config)
     model = infer_runner.model
     evaler_config = trainer_config.evalers["validation"]
     evaler_config.name = "validation"
@@ -130,6 +137,7 @@ def run_inference(texts):
         method_runner = infer_runner.create_method_runner(method="predict", prng_key=prng_key)
 
         for batch_ix, input_batch in enumerate(evaler.input.batches(eval_input_iter)):
+            import pdb; pdb.set_trace()
             input_ids = input_batch["input_ids"].tolist()
             input_texts = sentence_piece_vocab.tokenizer.decode_ids(input_ids)
             input_batch, input_batch_str_tensors = pop_string_tensors(input_batch)
@@ -167,15 +175,118 @@ def get_version(model_name):
     return version
 
 
+def get_sentence_piece_tokenizer():
+    vocab_cfg = config_for_function(vocab).set(
+        sentencepiece_model_name=sentencepiece_model_name, num_extra_ids=None
+    )
+    sentence_piece_vocab = vocab_cfg.instantiate()
+    return sentence_piece_vocab
+
+
+def relative_difference(x, y):
+    # May get hugh relative difference since some logits would be super small
+    return np.abs(x - y) / np.min([np.abs(x), np.abs(y)], axis=0)
+
+def average_top_k_jaccard_similarity(x, y, max_k=100):
+    ks = [i for i in range(1, max_k + 1, 5)]
+    jaccard_indices = defaultdict(int)
+    batch_size, seq_len, vocab_size = x.shape
+
+    for x_sequence, y_sequence in zip(x, y):
+        for x_logits, y_logits in zip(x_sequence, y_sequence):
+            for k in ks:
+                top_x_indices = x_logits.argsort()[::-1]
+                top_y_indices = y_logits.argsort()[::-1]
+                top_x_set = set(top_x_indices[:k])
+                top_y_set = set(top_y_indices[:k])
+                jaccard_index = len(top_x_set.intersection(top_y_set)) / len(top_x_set.union(top_y_set))
+                jaccard_indices[k] += jaccard_index
+
+    for k in jaccard_indices:
+        jaccard_indices[k] /= (batch_size * seq_len)
+    return jaccard_indices
+
+def relative_difference_with_top_p(x, y):
+    return None
+
+
+def get_top_p(x, p):
+    total = 0.0
+    top_values = list()
+    for val in x:
+        total += val
+        top_values.append(val)
+        if total > p:
+            break
+    return top_values
+
+def assert_top_p_allclose(x, y, p=0.99):
+    x = np.sort(x, axis=-1)[:,:,::-1]
+    y = np.sort(y, axis=-1)[:,:,::-1]
+
+    top_x_flat = list()
+    top_y_flat = list()
+    for x_seq, y_seq in zip(x, y):
+        for x_token, y_token in zip(x_seq, y_seq):
+            top_x = get_top_p(x_token, p)
+            top_y = get_top_p(y_token, p)
+
+            top_x = top_x[:min(len(top_x), len(top_y))]
+            top_y = top_y[:min(len(top_x), len(top_y))]
+            top_x_flat.extend(top_x)
+            top_y_flat.extend(top_y)
+
+    top_x_flat = np.asarray(top_x_flat)
+    top_y_flat = np.asarray(top_y_flat)
+    rdiff = relative_difference(top_x_flat, top_y_flat)
+    print("max top p difference", np.max(top_x_flat - top_y_flat))
+    print("mean top p difference", np.mean(top_x_flat - top_y_flat))
+    print("max top p relative difference", np.max(rdiff))
+    print("mean top p relative difference", np.mean(rdiff))
+
+    assert np.allclose(top_x, top_y, atol=1e-3, rtol=1e-2)
+
+def assert_top_k_allclose(x, y, k=64):
+    x = np.sort(x, axis=-1)[:,:,::-1]
+    y = np.sort(y, axis=-1)[:,:,::-1]
+
+    top_x = x[:,:,:k]
+    top_y = y[:,:,:k]
+
+    rdiff = relative_difference(top_x, top_y)
+    print("max top k difference", np.max(top_x - top_y))
+    print("mean top k difference", np.mean(top_x - top_y))
+    print("max top k relative difference", np.max(rdiff))
+    print("mean top k relative difference", np.mean(rdiff))
+
+    assert np.allclose(top_x, top_y, atol=1e-3, rtol=1e-2)
+
 def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False, reverse=False):
     """Run a forward pass and compare logits to validate conversion between fuji and llama model."""
     fuji, state, llama = get_fuji_and_llama(
-        fuji_model_name, llama_model_name, load_true_model, reverse
+        fuji_model_name, llama_model_name, load_true_model, reverse, fuji_model_path=CHECKPOINT_PATH
     )
 
     # generate dummy input data
-    ids = jax.random.randint(jax.random.PRNGKey(seed), shape=(2, 2), minval=0, maxval=12345)
+    # ids = jax.random.randint(jax.random.PRNGKey(seed), shape=(2, 2), minval=0, maxval=12345)
+    # end to end test with texts
+    tokenizer = get_sentence_piece_tokenizer()
+    def pad_list(l, max_len, fill_value=tokenizer.pad_id):
+        return [tokenizer.eos_id] + l + [fill_value] * (max_len - len(l) - 1)
+
+    texts = [
+        "How are you doing?",
+        "who is the president of the US now?",
+        "The USA is in which continent?",
+        "California is a state in",
+        "Can you tell me something about California state?\n",
+    ]
+    ids = tokenizer.encode(texts)
+    padded_ids = [pad_list(cur_ids, 6) for cur_ids in ids]
+    ids = [cur_ids[:4] for cur_ids in padded_ids]
+    target_ids = [cur_ids[1:5] for cur_ids in padded_ids]
     torch_ids = torch.from_numpy(np.asarray(ids))
+    torch_target_ids = torch.from_numpy(np.asarray(target_ids))
 
     # conversion for llama2 and llama3 would be different
     # for example llama3 would use GQA and some of the model also share weights between lm_head and emb
@@ -188,8 +299,9 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
     else:
         state = parameters_from_llama(llama, state, version)
 
-    input_batch = {"input_ids": ids}
-    (_, aux), _ = functional(
+    input_batch = {"input_ids": jnp.asarray(ids), "target_labels": jnp.asarray(target_ids)}
+    # (_, aux), _ = functional(
+    (loss, aux), output_collection = functional(
         fuji,
         is_training=False,
         prng_key=jax.random.PRNGKey(seed),
@@ -198,10 +310,26 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
     )
 
     with torch.no_grad():
-        output = llama(torch_ids)
+        output = llama(torch_ids, labels=torch_target_ids)
+        # transformers will shift the ids when calculating the loss
+        # so to make sure the loss would match, adjust the input
+        # https://github.com/huggingface/transformers/blob/641adca55832ed9c5648f54dcd8926d67d3511db/src/transformers/models/llama/modeling_llama.py#L833
+        extra_ids = [cur_ids[:5] for cur_ids in padded_ids]
+        extra_ids = torch.from_numpy(np.asarray(extra_ids))
+        output_with_loss = llama(extra_ids, labels=extra_ids)
+        llama_loss = output_with_loss.loss
 
     fuji_logits = np.asarray(aux["logits"])
     llama_logits = output.logits.numpy()
+    # rdiff = relative_difference(fuji_logits, llama_logits)
+    # jaccard_indices = average_top_k_jaccard_similarity(fuji_logits, llama_logits)
+    import pdb; pdb.set_trace()
+    fuji_probs = np.asarray(jax.nn.softmax(aux["logits"]))
+    llama_probs = torch.softmax(output.logits, dim=-1).numpy()
+    assert_top_k_allclose(fuji_probs, llama_probs)
+    assert_top_p_allclose(fuji_probs, llama_probs)
+
+    assert isinstance(aux["logits"].dtype, np.dtypes.Float32DType)
 
     # The difference is caused by the SDPA attention layer. The deeper the larger the error.
     if fuji_model_name == "fuji-1B-v3":
@@ -223,7 +351,7 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
 
 
 def convert_and_save_checkpoint(
-    fuji_model_name, llama_model_name, load_true_model=True, reverse=False, fuji_model_path=None
+    fuji_model_name, llama_model_name, load_true_model=True, reverse=False, fuji_model_path=None, save_name="converted_model"
 ):
     fuji, state, llama = get_fuji_and_llama(
         fuji_model_name, llama_model_name, load_true_model=load_true_model, reverse=reverse, fuji_model_path=fuji_model_path
@@ -236,14 +364,14 @@ def convert_and_save_checkpoint(
             state, llama, version
         )
         llama.load_state_dict(llama_state_dict)
-        checkpoint_path = f"/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/{llama_model_name}"
+        checkpoint_path = f"/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/{save_name}"
         save_transformers_checkpoint(llama, checkpoint_path)
         # Seems spm and transformers tokenizers are not matching
         # copy_tokenizer_files(converted_tokenizer_path, checkpoint_path)
         # Remember to copy the generation_config.json to checkpoint folder to get similar results
     else:
         state = parameters_from_llama(llama, state, version)
-        checkpoint_path = f"/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/{fuji_model_name}"
+        checkpoint_path = f"/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/{save_name}"
 
         save_axlearn_checkpoint(fuji, state, checkpoint_path, get_mesh(trainer_config))
 
@@ -321,7 +449,8 @@ def generate(texts):
 
         # add padding
         def pad_list(l, max_len, fill_value=tokenizer.pad_id):
-            return l + [fill_value] * (max_len - len(l))
+            # need to add a eos_token_id at the begining to be consistent with text_to_lm_eval_input
+            return [eos_token_id] + l + [fill_value] * (max_len - len(l) - 1)
 
         input_ids = [pad_list(ids, max_len) for ids in input_ids]
         # input_ids = np.pad(input_ids, ((0, 0),(0, max_len)), "constant", constant_values=0)
@@ -360,7 +489,7 @@ def generate(texts):
         if use_transformers:
             decode_fn = tokenizer.batch_decode
         else:
-            decode_fn = tokenizer.tokenizer.decode
+            decode_fn = lambda x: tokenizer.decode(x[0])
 
         if indices.size > 0:
             output_texts = decode_fn([output.sequences[0][0][: indices[0]]])
@@ -385,10 +514,12 @@ if __name__ == "__main__":
         "California is a state in",
     ]
     # run_inference(texts)
-    generate(texts)
+    # generate(texts)
     # validate_conversion("fuji-1B-v3", "Llama-3.2-1B", load_true_model=True)
     # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True)
     # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=False)
-    # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=False, reverse=True)
+    validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True)
     # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=False)
-    # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True, fuji_model_path=CHECKPOINT_PATH)
+    # convert_and_save_checkpoint("fuji-7B-v2", "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/baseline_34000", load_true_model=True, reverse=False, save_name="round_trip")
+    # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True, fuji_model_path=CHECKPOINT_PATH, save_name="baseline_34000")
+    # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=False, reverse=True, save_name="random_init")
