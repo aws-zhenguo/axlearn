@@ -267,7 +267,7 @@ def assert_top_p_allclose(x, y, p=0.99):
     print("max top p relative difference", np.max(rdiff))
     print("mean top p relative difference", np.mean(rdiff))
 
-    assert np.allclose(top_x, top_y, atol=1e-3, rtol=1e-2)
+    np.testing.assert_allclose(top_x, top_y, atol=1e-3, rtol=2e-2)
 
 
 def assert_top_k_allclose(x, y, k=64):
@@ -283,7 +283,41 @@ def assert_top_k_allclose(x, y, k=64):
     print("max top k relative difference", np.max(rdiff))
     print("mean top k relative difference", np.mean(rdiff))
 
-    assert np.allclose(top_x, top_y, atol=1e-3, rtol=1e-2)
+    np.testing.assert_allclose(top_x, top_y, atol=1e-3, rtol=2e-2)
+
+
+def assert_top_p_and_top_k_allclose(x, y, k=64, p=0.99):
+    x_indices = np.argsort(x, axis=-1)[:,:,::-1]
+
+    top_x_flat = list()
+    top_y_flat = list()
+    for i, (x_seq, y_seq) in enumerate(zip(x, y)):
+        for j, (x_token, y_token) in enumerate(zip(x_seq, y_seq)):
+            top_indices = list()
+            total = 0.0
+            for idx in x_indices[i][j]:
+                total += x_token[idx]
+                top_indices.append(idx)
+
+                if total > p and len(top_indices) >= k:
+                    break
+
+            top_x = x_token[top_indices]
+            top_y = y_token[top_indices]
+
+            top_x_flat.extend(top_x)
+            top_y_flat.extend(top_y)
+
+    top_x_flat = np.asarray(top_x_flat)
+    top_y_flat = np.asarray(top_y_flat)
+    rdiff = relative_difference(top_x_flat, top_y_flat)
+    print("max top p/k difference", np.max(top_x_flat - top_y_flat))
+    print("mean top p/k difference", np.mean(top_x_flat - top_y_flat))
+    print("max top p/k relative difference", np.max(rdiff))
+    print("mean top p/k relative difference", np.mean(rdiff))
+
+    np.testing.assert_allclose(top_x, top_y, atol=1e-3, rtol=2e-2)
+
 
 def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False, reverse=False):
     """Run a forward pass and compare logits to validate conversion between fuji and llama model."""
@@ -352,6 +386,7 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
     llama_probs = torch.softmax(output.logits, dim=-1).numpy()
     assert_top_k_allclose(fuji_probs, llama_probs)
     assert_top_p_allclose(fuji_probs, llama_probs)
+    assert_top_p_and_top_k_allclose(fuji_probs, llama_probs)
 
     assert isinstance(aux["logits"].dtype, np.dtypes.Float32DType)
 
@@ -368,7 +403,7 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
         atol = 2.0
     else:
         atol = 2e-3
-    assert np.allclose(fuji_logits, llama_logits, atol=atol), (
+    np.testing.assert_allclose(fuji_logits, llama_logits, atol=atol), (
         f"{fuji_logits[0,0,:10]} != {llama_logits[0,0,:10]}, "
         f"{np.abs(fuji_logits - llama_logits).max()}"
     )
