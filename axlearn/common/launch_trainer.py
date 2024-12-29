@@ -101,7 +101,7 @@ def get_trainer_config(
         )
     trainer_config: SpmdTrainer.Config = trainer_config_fn()
     # trainer_config.save_input_iterator = True
-    trainer_config.checkpointer.save_policy.n = 2
+    # trainer_config.checkpointer.save_policy.n = 2
     trainer_config.dir = trainer_config.dir or flag_values.trainer_dir
     if flag_values.mesh_selector is not None:
         select_mesh_config(trainer_config, mesh_selector=flag_values.mesh_selector)
@@ -127,6 +127,7 @@ def run_trainer(trainer_config: SpmdTrainer.Config) -> Any:
     trainer_config_debug_string = trainer_config.debug_string()
     logging.info("Trainer config:\n%s", trainer_config_debug_string)
     if jax.process_index() == 0:
+        # save_trainer_config
         trainer_config_file = os.path.join(trainer_config.dir, "trainer_config")
         with fs.open(trainer_config_file, "w") as f:
             f.write(trainer_config_debug_string)

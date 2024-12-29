@@ -67,8 +67,8 @@ class Version(enum.Enum):
 # Mapping from Fuji versions to vocab sizes.
 VOCAB_SIZE = {
     Version.V1: 32 * 1024,
-    # Version.V2: 32 * 1024,
-    Version.V2: 32000,
+    Version.V2: 32 * 1024,
+    # Version.V2: 32000,
     Version.V3: 128256,
 }
 
@@ -205,7 +205,7 @@ def get_trainer_kwargs(
                 num_heads=32,
                 num_kv_heads=num_kv_heads,
                 rope_theta=rope_theta,
-                shared_lm_head=False,
+                shared_lm_head=True,
                 flash_attention=flash_attention,
             ),
             learner_kwargs=dict(peak_lr=3e-4, weight_decay=0.1),
@@ -297,7 +297,7 @@ def get_trainer_kwargs(
     elif model_size == "8B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=32,
+                num_layers=8,
                 hidden_dim=128 * 32,
                 num_heads=32,
                 num_kv_heads=num_kv_heads,
@@ -377,7 +377,7 @@ def get_trainer_kwargs(
     elif model_size == "70B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=80,
+                num_layers=8,
                 hidden_dim=128 * 64,
                 num_heads=64,
                 # No GQA support in V1 models, so num_kv_heads is the same as num_heads.
