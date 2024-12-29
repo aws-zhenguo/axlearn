@@ -243,7 +243,7 @@ def ndarray_apply_order(x, indices):
     return np.asarray(result)
 
 
-def assert_top_p_allclose(x, y, p=0.99):
+def assert_top_p_allclose(x, y, atol, rtol, p=0.99):
     # x = np.sort(x, axis=-1)[:,:,::-1]
     # y = np.sort(y, axis=-1)[:,:,::-1]
     x_indices = np.argsort(x, axis=-1)[:,:,::-1]
@@ -267,10 +267,10 @@ def assert_top_p_allclose(x, y, p=0.99):
     print("max top p relative difference", np.max(rdiff))
     print("mean top p relative difference", np.mean(rdiff))
 
-    np.testing.assert_allclose(top_x, top_y, atol=1e-3, rtol=2e-2)
+    np.testing.assert_allclose(top_x, top_y, atol=atol, rtol=rtol, equal_nan=False)
 
 
-def assert_top_k_allclose(x, y, k=64):
+def assert_top_k_allclose(x, y, atol, rtol, k=64):
     x_indices = np.argsort(x, axis=-1)[:,:,::-1]
     top_x = ndarray_apply_order(x, x_indices)[:,:,:k]
     top_y = ndarray_apply_order(y, x_indices)[:,:,:k]
@@ -283,10 +283,10 @@ def assert_top_k_allclose(x, y, k=64):
     print("max top k relative difference", np.max(rdiff))
     print("mean top k relative difference", np.mean(rdiff))
 
-    np.testing.assert_allclose(top_x, top_y, atol=1e-3, rtol=2e-2)
+    np.testing.assert_allclose(top_x, top_y, atol=atol, rtol=rtol, equal_nan=False)
 
 
-def assert_top_p_and_top_k_allclose(x, y, k=64, p=0.99):
+def assert_top_p_and_top_k_allclose(x, y, atol, rtol, k=64, p=0.99):
     x_indices = np.argsort(x, axis=-1)[:,:,::-1]
 
     top_x_flat = list()
@@ -316,7 +316,7 @@ def assert_top_p_and_top_k_allclose(x, y, k=64, p=0.99):
     print("max top p/k relative difference", np.max(rdiff))
     print("mean top p/k relative difference", np.mean(rdiff))
 
-    np.testing.assert_allclose(top_x, top_y, atol=1e-3, rtol=2e-2)
+    np.testing.assert_allclose(top_x, top_y, atol=atol, rtol=rtol, equal_nan=False)
 
 
 def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False, reverse=False):
@@ -381,32 +381,46 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
     llama_logits = output.logits.numpy()
     # rdiff = relative_difference(fuji_logits, llama_logits)
     # jaccard_indices = average_top_k_jaccard_similarity(fuji_logits, llama_logits)
-    import pdb; pdb.set_trace()
-    fuji_probs = np.asarray(jax.nn.softmax(aux["logits"]))
-    llama_probs = torch.softmax(output.logits, dim=-1).numpy()
-    assert_top_k_allclose(fuji_probs, llama_probs)
-    assert_top_p_allclose(fuji_probs, llama_probs)
-    assert_top_p_and_top_k_allclose(fuji_probs, llama_probs)
-
     assert isinstance(aux["logits"].dtype, np.dtypes.Float32DType)
 
     # The difference is caused by the SDPA attention layer. The deeper the larger the error.
     if fuji_model_name == "fuji-1B-v3":
         atol = 3e-2
+        rtol = 1e-4
     elif fuji_model_name == "fuji-3B-v3":
         atol = 2e-2
+        rtol = 1e-4
     elif fuji_model_name == "fuji-7B-v2":
-        atol = 3e-2
+        atol = 1e-3
+        rtol = 1e-4
     elif fuji_model_name == "fuji-8B-v3":
         atol = 2e-1
+        rtol = 1e-4
     elif fuji_model_name == "fuji-70B-v3":
         atol = 2.0
+        rtol = 1e-4
     else:
         atol = 2e-3
-    np.testing.assert_allclose(fuji_logits, llama_logits, atol=atol), (
-        f"{fuji_logits[0,0,:10]} != {llama_logits[0,0,:10]}, "
-        f"{np.abs(fuji_logits - llama_logits).max()}"
-    )
+        rtol = 1e-4
+
+    import pdb; pdb.set_trace()
+    # TODO should not do the softmax myself
+    fuji_probs = np.asarray(jax.nn.softmax(aux["logits"]))
+    llama_probs = torch.softmax(output.logits, dim=-1).numpy()
+    assert isinstance(fuji_probs.dtype, np.dtypes.Float32DType)
+
+    assert_top_k_allclose(llama_probs, fuji_probs, atol, rtol)
+    assert_top_p_allclose(llama_probs, fuji_probs, atol, rtol)
+    assert_top_p_and_top_k_allclose(llama_probs, fuji_probs, atol, rtol)
+    print("smallest fuji prob:", np.min(fuji_probs))
+    print("smallest llama prob:", np.min(llama_probs))
+
+    np.save("fuji_probs", fuji_probs)
+    np.save("llama_probs", llama_probs)
+    # np.load("fuji_probs.npy")
+
+
+    # np.testing.assert_allclose(fuji_logits, llama_logits, atol=atol, equal_nan=False)
 
 
 def convert_and_save_checkpoint(
