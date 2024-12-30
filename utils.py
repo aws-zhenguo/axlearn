@@ -169,7 +169,7 @@ def axlearn_rope_to_transformers_rope(vector: jax.Array) -> jax.Array:
     return vector.reshape(n, h, d)
 
 
-def parameters_from_llama(llama: LlamaForCausalLM, state: dict, version=2) -> dict:
+def parameters_from_llama(llama: LlamaForCausalLM, state: dict, use_gqa=False) -> dict:
     """Converts llama weights from huggingface model to fuji state.
 
     The following model are supported and tested:
@@ -217,7 +217,7 @@ def parameters_from_llama(llama: LlamaForCausalLM, state: dict, version=2) -> di
         down_proj.append(layer.mlp.down_proj.weight.transpose(0, 1))
 
         # Llama3 and Llama2 70B uses GQA, but Llama2 7B does not
-        if version == 3:
+        if use_gqa:
             vector = torch.concat(
                 [
                     transformers_rope_to_axlearn_rope(
@@ -272,7 +272,7 @@ def parameters_from_llama(llama: LlamaForCausalLM, state: dict, version=2) -> di
     return as_jax_tensor(state)
 
 
-def parameters_to_llama(state: dict, llama, version=2) -> dict:
+def parameters_to_llama(state: dict, llama, use_gqa=2) -> dict:
     """Convert parameters from axlearn fuji to transformers llama."""
     state = jax.tree.map(lambda x: x, state)
     llama_state = llama.state_dict()
@@ -300,7 +300,8 @@ def parameters_to_llama(state: dict, llama, version=2) -> dict:
         ]["layer"]["feed_forward"]["linear2"]["weight"][idx].transpose()
 
         # convert attention layers
-        if version == 3:
+        if use_gqa:
+            import pdb; pdb.set_trace()
             # main difference between 2 and 3 is concat and stack since 3 uses GQA
             raise Exception("Conversion for Llama3 not implemented")
         else:
@@ -434,13 +435,13 @@ def validate_weights(fuji_model_name, llama_model_name, load_true_model=False, r
     # conversion for llama2 and llama3 would be different
     # for example llama3 would use GQA and some of the model also share weights between lm_head and emb
     if llama_model_name in ["Llama-2-7b", "Llama-2-7b-hf"]:
-        version = 2
+        use_gqa = False
     else:
-        version = 3
+        use_gqa = True
 
     original_state_dict = deepcopy(llama.state_dict())
-    state = parameters_from_llama(llama, state, version)
-    llama_state_dict = parameters_to_llama(state, llama, version)
+    state = parameters_from_llama(llama, state, use_gqa)
+    llama_state_dict = parameters_to_llama(state, llama, use_gqa)
 
     for layer_name, layer_weights in original_state_dict.items():
         assert jnp.array_equal(layer_weights, llama_state_dict[layer_name])

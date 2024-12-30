@@ -34,8 +34,8 @@ from utils import (
 )
 
 # config_name = "fuji-1B-v3"
-config_name = "fuji-7B-v2"
-# config_name = "fuji-70B-v2"
+# config_name = "fuji-7B-v2"
+config_name = "fuji-70B-v2"
 
 # Note: step folder need to be included for inference runner but not for checkpointer
 # to specify step folder for checkpointer, use the step parameter
@@ -52,9 +52,11 @@ elif config_name == "fuji-7B-v2":
     sentencepiece_model_name = "bpe_32k_c4.model"
     converted_tokenizer_path = "ConvertedTokenizer"
 else:
-    CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/trn_baselines/611/axlearn_out/checkpoints/step_00010000"
+    # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/trn_baselines/611/axlearn_out/checkpoints/step_00010000"
+    CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10985/axlearn_out/checkpoints/step_00035000"
     sentencepiece_model_name = "bpe_32k_c4.model"
     converted_tokenizer_path = "ConvertedTokenizer"
+
 trainer_config_fn = get_named_trainer_config(
     config_name, config_module="axlearn.experiments.text.gpt.c4_trainer"
 )
@@ -168,7 +170,7 @@ def run_inference(texts):
 
 
 def get_version(model_name):
-    if "Llama-3" in model_name:
+    if "v3" in model_name:
         return 3
     else:
         return 2
@@ -348,14 +350,17 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
 
     # conversion for llama2 and llama3 would be different
     # for example llama3 would use GQA and some of the model also share weights between lm_head and emb
-    version = get_version(llama_model_name)
+    if "70B" in fuji_model_name:
+        use_gqa = True
+    else:
+        use_gqa = False
 
     # convert params
     if reverse:
-        llama_state_dict = parameters_to_llama(state, llama, version)
+        llama_state_dict = parameters_to_llama(state, llama, use_gqa)
         llama.load_state_dict(llama_state_dict)
     else:
-        state = parameters_from_llama(llama, state, version)
+        state = parameters_from_llama(llama, state, use_gqa)
 
     input_batch = {"input_ids": jnp.asarray(ids), "target_labels": jnp.asarray(target_ids)}
     # (_, aux), _ = functional(
@@ -429,12 +434,15 @@ def convert_and_save_checkpoint(
     fuji, state, llama = get_fuji_and_llama(
         fuji_model_name, llama_model_name, load_true_model=load_true_model, reverse=reverse, fuji_model_path=fuji_model_path
     )
-    version = get_version(llama_model_name)
+    if "70B" in fuji_model_name:
+        use_gqa = True
+    else:
+        use_gqa = False
 
     # convert params
     if reverse:
         llama_state_dict = parameters_to_llama(
-            state, llama, version
+            state, llama, use_gqa
         )
         llama.load_state_dict(llama_state_dict)
         checkpoint_path = f"/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/{save_name}"
@@ -443,7 +451,7 @@ def convert_and_save_checkpoint(
         # copy_tokenizer_files(converted_tokenizer_path, checkpoint_path)
         # Remember to copy the generation_config.json to checkpoint folder to get similar results
     else:
-        state = parameters_from_llama(llama, state, version)
+        state = parameters_from_llama(llama, state, use_gqa)
         checkpoint_path = f"/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/{save_name}"
 
         save_axlearn_checkpoint(fuji, state, checkpoint_path, get_mesh(trainer_config))
@@ -591,7 +599,8 @@ if __name__ == "__main__":
     # validate_conversion("fuji-1B-v3", "Llama-3.2-1B", load_true_model=True)
     # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True)
     # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=False)
-    validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True)
+    # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True)
+    validate_conversion("fuji-70B-v2", "Llama-2-70b-hf", load_true_model=True, reverse=True)
     # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=False)
     # convert_and_save_checkpoint("fuji-7B-v2", "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/baseline_34000", load_true_model=True, reverse=False, save_name="round_trip")
     # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True, fuji_model_path=CHECKPOINT_PATH, save_name="baseline_34000")
