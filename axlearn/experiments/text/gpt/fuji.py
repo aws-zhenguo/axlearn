@@ -24,8 +24,10 @@ from axlearn.common.attention import (
     FusedGroupedQKVLinear,
     FusedQKVLinear,
     GroupedQueryAttention,
+    GroupedQKVLinear,
     MultiheadAttention,
     RepeatedTransformerLayer,
+    StackedTransformerLayer,
     RoFormerQKVLinear,
 )
 from axlearn.common.base_layer import RematSpec
@@ -428,6 +430,8 @@ def get_trainer_kwargs(
         raise NotImplementedError(f"Unknown model size {model_size}.")
     model_kwargs = trainer_kwargs.pop("model_kwargs")
     model_kwargs.setdefault("vocab_size", vocab_size)
+    # https://github.com/apple/axlearn/compare/main...ptoulme-aws:axlearn:accuracy_workstream_trn#diff-bdb7d46e038855126e7c2f257e2c9db7ed2cb38ca1bdfc4f07168522dd45020eR461
+    # model_kwargs.setdefault("stack_cfg", StackedTransformerLayer.default_config())
     trainer_kwargs["model_cfg"] = model_config(**model_kwargs)
     trainer_kwargs["learner_cfg"] = adamw_decoupled_learner_config(
         max_step=trainer_kwargs["max_step"],
@@ -479,6 +483,8 @@ def model_config(
     if num_kv_heads:
         atten_cfg = GroupedQueryAttention.default_config()
         atten_input_linear = FusedGroupedQKVLinear.default_config().set(num_kv_heads=num_kv_heads)
+        # https://github.com/apple/axlearn/compare/main...ptoulme-aws:axlearn:accuracy_workstream_trn#diff-bdb7d46e038855126e7c2f257e2c9db7ed2cb38ca1bdfc4f07168522dd45020eR514
+        # atten_input_linear = GroupedQKVLinear.default_config().set(num_kv_heads=num_kv_heads)
     else:
         atten_cfg = MultiheadAttention.default_config()
         atten_input_linear = FusedQKVLinear.default_config()
