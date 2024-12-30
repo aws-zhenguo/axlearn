@@ -77,7 +77,6 @@ def get_trainer_config(
     *,
     flag_values: flags.FlagValues = FLAGS,
 ) -> SpmdTrainer.Config:
-    # import pdb; pdb.set_trace()
     if trainer_config_fn is None:
         # Attempt a direct import. This is a common case for launching from pip package.
         try:
@@ -142,7 +141,6 @@ def run_trainer(trainer_config: SpmdTrainer.Config) -> Any:
                 f,
             )
 
-    # import pdb; pdb.set_trace()
     trainer: SpmdTrainer = trainer_config.instantiate(parent=None)
     prng_key = jax.random.PRNGKey(seed=FLAGS.trainer_prng_seed)
     output = trainer.run(prng_key)

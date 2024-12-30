@@ -637,7 +637,6 @@ class SpmdEvaler(Module):
             RuntimeError: If attempting to nest profilers.
         """
         cfg = self.config
-        # import pdb; pdb.set_trace()
 
         if not force_run and not self._eval_policy(
             step=step, train_summaries=(train_summaries or {})

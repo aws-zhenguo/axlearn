@@ -184,7 +184,6 @@ def async_save_tf_savables(
 def restore_tf_savables(value_map: Nested[Any], *, dir: str) -> Nested[Any]:
     """Restores TF savables from `dir` into `value_map` in-place."""
 
-    # import pdb; pdb.set_trace()
     for path, value in utils.flatten_items(value_map):
         tf_checkpoint = tf.train.Checkpoint(value)
         tf_checkpoint.read(os.path.join(dir, path))
@@ -433,7 +432,6 @@ class TensorStoreStateStorage(StateStorage):
                 "Checkpoint restoration must take place within the context of a Mesh"
             )
         spec.index = [("step", step)]
-        # load checkpoint base on spec
         for path, value in utils.flatten_items(state, separator="/"):
             if isinstance(value, (Tensor, TensorSpec)):
                 logging.vlog(
@@ -484,7 +482,6 @@ class TensorStoreStateStorage(StateStorage):
         # Wait for directory and index creation.
         multihost_utils.sync_global_devices(ckpt_dir)
         # Each worker writes its tf checkpoints under a different path.
-        # import pdb; pdb.set_trace()
         save_tf_future = async_save_tf_savables(
             spec.tf_ckpt_map,
             executor=self._executor,
@@ -516,74 +513,6 @@ class TensorStoreStateStorage(StateStorage):
     def wait_until_finished(self):
         self._manager.wait_until_finished()
 
-    def print_dimensions(self, l):
-        for v in l:
-            print(type(v), v.shape)
-
-    def restore_from_dir2(
-        self,
-        step: int,
-        state: Union[NestedTensor, NestedTensorSpec],
-        *,
-        ckpt_dir: str,
-        validation: CheckpointValidationType = CheckpointValidationType.EXACT,
-    ) -> NestedTensor:
-        # import pdb; pdb.set_trace()
-        spec = self._get_spec(step, state, ckpt_dir)
-        # import pdb; pdb.set_trace()
-        logging.info("Restoring checkpoint from directory %s", ckpt_dir)
-        # check_state_structure(
-        #     read_index_file(ckpt_dir), target_structure=spec.index, validation=validation
-        # )
-        restore_tf_savables(
-            spec.tf_ckpt_map, dir=os.path.join(ckpt_dir, f"tf_{jax.process_index()}")
-        )
-        maybe_restore_grain_savables(
-            spec.grain_ckpt_map, dir=os.path.join(ckpt_dir, f"grain_{jax.process_index()}")
-        )
-
-        from transformers import AutoModel, LlamaForCausalLM
-        from axlearn.common.param_converter import parameters_from_llama_3, parameters_from_llama_3_to_list
-        # model_path = "Meta-Llama-3.1-70B-Instruct"
-        model_path = "Llama-3.2-1B"
-        # llama = AutoModel.from_pretrained(model_path)
-        llama = LlamaForCausalLM.from_pretrained(model_path, local_files_only=True, device_map="cpu")
-        # import pdb; pdb.set_trace()
-        state_leaves = parameters_from_llama_3_to_list(llama, state.model, spec.shardings)
-        # restored_state = parameters_from_llama_3(llama, state.model, spec.shardings)
-        # state.model = restored_state
-        # import pdb; pdb.set_trace()
-        # load actual checkpoint
-        # fuji
-        # tree_state = jax.tree_util.tree_structure(state)
-        # values wtih * in jax.tree_util.tree_structure(state) will have the params
-        # 32 for number of repeating blocks
-        # tate_leaves[0] -> prng_keys
-        # tate_leaves[1] -> embedding (32768, 4096)
-        # tate_leaves[2] -> outputnorm (4096, )
-        # tate_leaves[3] -> linear1_0 (32, 4096, 11008)
-        # tate_leaves[4] -> linear1_1 (32, 4096, 11008)
-        # tate_leaves[5] -> linear2 (32, 11008, 4096)
-        # tate_leaves[6] -> norm (32, 4096)
-        # tate_leaves[7] -> qkv_proj (32, 3, 4096, 32, 128)
-        # tate_leaves[8] -> o_proj (32, 4096, 32, 128)
-        # tate_leaves[9] -> norm (32, 4096)
-        # 
-        # insert prng_key
-        # prng_key = jax.random.key()
-        # state_leaves.insert(0, jax.random.uniform(prng_key, (4,)))
-        prng_key = jnp.asarray([ 744862133, 117316191,  744862143, 1173516191], dtype=jnp.uint32)
-        state_leaves.insert(0, prng_key)
-        self.print_dimensions(state_leaves)
-        # import pdb; pdb.set_trace()
-        restored_state = jax.tree_util.tree_unflatten(
-            jax.tree_util.tree_structure(state), state_leaves
-        )
-        multihost_utils.sync_global_devices(ckpt_dir)
-        return restored_state
-        # return state
-
-
     def restore_from_dir(
         self,
         step: int,
@@ -592,9 +521,7 @@ class TensorStoreStateStorage(StateStorage):
         ckpt_dir: str,
         validation: CheckpointValidationType = CheckpointValidationType.EXACT,
     ) -> NestedTensor:
-        # import pdb; pdb.set_trace()
         spec = self._get_spec(step, state, ckpt_dir)
-        # import pdb; pdb.set_trace()
         logging.info("Restoring checkpoint from directory %s", ckpt_dir)
         check_state_structure(
             read_index_file(ckpt_dir), target_structure=spec.index, validation=validation
@@ -605,8 +532,7 @@ class TensorStoreStateStorage(StateStorage):
         maybe_restore_grain_savables(
             spec.grain_ckpt_map, dir=os.path.join(ckpt_dir, f"grain_{jax.process_index()}")
         )
-        # load actual checkpoint
-        # calls jax.experimental.array_serialization.deserialize
+
         restored_gda_values = self._manager.deserialize(
             shardings=spec.shardings,
             tensorstore_specs=spec.tensorstore_specs,
@@ -627,9 +553,6 @@ class TensorStoreStateStorage(StateStorage):
             else:
                 raise RuntimeError(f"Unknown index entry '{value}'")
 
-        # import pdb; pdb.set_trace()
-        # # match state with tensor values
-        self.print_dimensions(state_leaves)
         restored_state = jax.tree_util.tree_unflatten(
             jax.tree_util.tree_structure(state), state_leaves
         )

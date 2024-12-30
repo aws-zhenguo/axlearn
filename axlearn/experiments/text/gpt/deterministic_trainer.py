@@ -10,7 +10,6 @@ from axlearn.experiments.text.common import vocab
 from axlearn.experiments.text.gpt import honeycrisp
 from axlearn.experiments.text.gpt.common import REPLACE_NEWLINES_WITH, tfds_input
 from axlearn.experiments.trainer_config_utils import TrainerConfigFn, with_overrides
-from axlearn.experiments.text.gpt import fuji, gspmd
 
 _SENTENCEPIECE_MODEL_NAME = {
     48 * 1024: "bpe_48k_honeycrisp.model",
@@ -73,7 +72,6 @@ def named_trainer_configs() -> dict[str, TrainerConfigFn]:
     """Returns a mapping from trainer config names to TrainerConfigFn's."""
     config_map = {}
     for training_dataset_name, dataset_info in _TRAINING_DATASETS.items():
-        # use honeycrips model
         for model_name, trainer_config_fn in honeycrisp.trainer_configs(
             _train_input_source_fn(**dataset_info), _eval_input_sources
         ).items():
@@ -81,11 +79,4 @@ def named_trainer_configs() -> dict[str, TrainerConfigFn]:
                 trainer_config_fn,
                 save_input_iterator=True,
             )
-    # for training_dataset_name, dataset_info in _TRAINING_DATASETS.items():
-    #     for model_name, trainer_config_fn in honeycrisp.trainer_configs(
-    #         _train_input_source_fn(**dataset_info), _eval_input_sources
-    #     ).items():
-    # config_map.update(fuji.trainer_configs(_train_input_source, _eval_input_sources))
-    # config_map.update(gspmd.trainer_configs(_train_input_source, _eval_input_sources))
-    # import pdb; pdb.set_trace()
     return config_map

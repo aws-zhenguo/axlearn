@@ -198,7 +198,6 @@ def get_trainer_kwargs(
             mesh_shape=mesh_shape_from_axes(data=-1, fsdp=8),
         )
     elif model_size == "7B":
-        # import pdb; pdb.set_trace()
         # Llama3 and Llama2 70B uses GQA, but Llama2 7B does not
         trainer_kwargs = dict(
             model_kwargs=dict(

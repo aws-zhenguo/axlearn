@@ -309,7 +309,7 @@ model.seq_axis_names[0]: 'seq'
 model.z_loss_scale: 0.0
 name: 'gpt_trainer'
 prune_empty_state_updates: True
-save_input_iterator: True
+save_input_iterator: False
 start_trace_process_indices[0]: 0
 summary_writer.klass: 'axlearn.common.summary_writer.SummaryWriter'
 summary_writer.max_queue: 1000

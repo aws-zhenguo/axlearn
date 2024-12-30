@@ -13,7 +13,6 @@ def _load_trainer_configs(
     config_module: str, *, optional: bool = False
 ) -> dict[str, TrainerConfigFn]:
     try:
-        # load c4_trainer's named_trainer_configs
         module = import_module(config_module)
         return module.named_trainer_configs()
     except (ImportError, AttributeError):
@@ -43,7 +42,6 @@ def get_named_trainer_config(config_name: str, *, config_module: str) -> Trainer
         return config_map(config_name)
 
     try:
-        # get target config
         return config_map[config_name]
     except KeyError as e:
         similar = similar_names(config_name, set(config_map.keys()))

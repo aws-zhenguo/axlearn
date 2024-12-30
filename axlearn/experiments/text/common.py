@@ -91,7 +91,6 @@ def vocab(
         ),
         f"tokenizers/sentencepiece/{sentencepiece_model_name}",
     )
-    # use seqio
     return seqio.SentencePieceVocabulary(
         sentencepiece_model_file=sentence_piece_vocab_file, extra_ids=num_extra_ids
     )
