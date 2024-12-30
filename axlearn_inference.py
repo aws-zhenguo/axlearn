@@ -34,8 +34,8 @@ from utils import (
 )
 
 # config_name = "fuji-1B-v3"
-# config_name = "fuji-7B-v2"
-config_name = "fuji-70B-v2"
+config_name = "fuji-7B-v2"
+# config_name = "fuji-70B-v2"
 
 # Note: step folder need to be included for inference runner but not for checkpointer
 # to specify step folder for checkpointer, use the step parameter
@@ -263,9 +263,11 @@ def assert_top_p_allclose(x, y, atol, rtol, p=0.99):
 
     top_x_flat = np.asarray(top_x_flat)
     top_y_flat = np.asarray(top_y_flat)
+    print("smallest prob in top p:", min(np.min(top_x_flat), np.min(top_y_flat)))
+
     rdiff = relative_difference(top_x_flat, top_y_flat)
-    print("max top p difference", np.max(top_x_flat - top_y_flat))
-    print("mean top p difference", np.mean(top_x_flat - top_y_flat))
+    print("max top p difference", np.max(np.abs(top_x_flat - top_y_flat)))
+    print("mean top p difference", np.mean(np.abs(top_x_flat - top_y_flat)))
     print("max top p relative difference", np.max(rdiff))
     print("mean top p relative difference", np.mean(rdiff))
 
@@ -278,10 +280,11 @@ def assert_top_k_allclose(x, y, atol, rtol, k=64):
     top_y = ndarray_apply_order(y, x_indices)[:,:,:k]
     # x = np.sort(x, axis=-1)[:,:,::-1]
     # y = np.sort(y, axis=-1)[:,:,::-1]
+    print("smallest prob in top k:", min(np.min(top_x), np.min(top_y)))
 
     rdiff = relative_difference(top_x, top_y)
-    print("max top k difference", np.max(top_x - top_y))
-    print("mean top k difference", np.mean(top_x - top_y))
+    print("max top k difference", np.max(np.abs(top_x - top_y)))
+    print("mean top k difference", np.mean(np.abs(top_x - top_y)))
     print("max top k relative difference", np.max(rdiff))
     print("mean top k relative difference", np.mean(rdiff))
 
@@ -312,9 +315,11 @@ def assert_top_p_and_top_k_allclose(x, y, atol, rtol, k=64, p=0.99):
 
     top_x_flat = np.asarray(top_x_flat)
     top_y_flat = np.asarray(top_y_flat)
+    print("smallest prob in top k and top p:", min(np.min(top_x_flat), np.min(top_y_flat)))
+
     rdiff = relative_difference(top_x_flat, top_y_flat)
-    print("max top p/k difference", np.max(top_x_flat - top_y_flat))
-    print("mean top p/k difference", np.mean(top_x_flat - top_y_flat))
+    print("max top p/k difference", np.max(np.abs(top_x_flat - top_y_flat)))
+    print("mean top p/k difference", np.mean(np.abs(top_x_flat - top_y_flat)))
     print("max top p/k relative difference", np.max(rdiff))
     print("mean top p/k relative difference", np.mean(rdiff))
 
@@ -599,8 +604,8 @@ if __name__ == "__main__":
     # validate_conversion("fuji-1B-v3", "Llama-3.2-1B", load_true_model=True)
     # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True)
     # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=False)
-    # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True)
-    validate_conversion("fuji-70B-v2", "Llama-2-70b-hf", load_true_model=True, reverse=True)
+    validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True)
+    # validate_conversion("fuji-70B-v2", "Llama-2-70b-hf", load_true_model=True, reverse=True)
     # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=False)
     # convert_and_save_checkpoint("fuji-7B-v2", "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/baseline_34000", load_true_model=True, reverse=False, save_name="round_trip")
     # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True, fuji_model_path=CHECKPOINT_PATH, save_name="baseline_34000")
