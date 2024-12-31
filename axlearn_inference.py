@@ -34,8 +34,8 @@ from utils import (
 )
 
 # config_name = "fuji-1B-v3"
-config_name = "fuji-7B-v2"
-# config_name = "fuji-70B-v2"
+# config_name = "fuji-7B-v2"
+config_name = "fuji-70B-v2"
 
 # Note: step folder need to be included for inference runner but not for checkpointer
 # to specify step folder for checkpointer, use the step parameter
@@ -618,8 +618,8 @@ if __name__ == "__main__":
     # validate_conversion("fuji-1B-v3", "Llama-3.2-1B", load_true_model=True)
     # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True)
     # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=False)
-    validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True)
-    # validate_conversion("fuji-70B-v2", "Llama-2-70b-hf", load_true_model=True, reverse=True)
+    # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True)
+    validate_conversion("fuji-70B-v2", "Llama-2-70b-hf", load_true_model=True, reverse=True)
     # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=False)
     # convert_and_save_checkpoint("fuji-7B-v2", "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/baseline_34000", load_true_model=True, reverse=False, save_name="round_trip")
     # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True, fuji_model_path=CHECKPOINT_PATH, save_name="baseline_34000")

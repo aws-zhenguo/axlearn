@@ -48,20 +48,22 @@ def get_checkpointer(checkpoint_path):
     return checkpointer
 
 
-# Note: it is ok to use checkpointer to load checkpoint directly
-# but need to be careful abou the checkpoint file structure
-# if the checkpoint is created by trainer, then it will be structured as following
-# step_00034000
-#   - gda
-#       - learner
-#       - model
-#       - prng_key
-# if the checkpoint is create by running checkpointer.save on the model state, it will nto have learner and prng_key
-# step_00022794
-#   - gda
-#       - decoder
-# to keep them consitent, wrap model state in a _InferenceRunnerState
 def load_checkpoint(trainer_config, checkpoint_path, step=None):
+    """
+    Note: it is ok to use checkpointer to load checkpoint directly
+    but need to be careful abou the checkpoint file structure
+    if the checkpoint is created by trainer, then it will be structured as following
+    step_00034000
+      - gda
+          - learner
+          - model
+          - prng_key
+    if the checkpoint is create by running checkpointer.save on the model state, it will nto have learner and prng_key
+    step_00022794
+      - gda
+          - decoder
+    to keep them consitent, wrap model state in a _InferenceRunnerState
+    """
     # checkpointer = get_checkpointer(checkpoint_path)
     inference_runner, _ = init_infer_runner(trainer_config, checkpoint_path)
     model_state = inference_runner._inference_runner_state.model
@@ -173,10 +175,8 @@ def parameters_from_llama(llama: LlamaForCausalLM, state: dict, use_gqa=False) -
     """Converts llama weights from huggingface model to fuji state.
 
     The following model are supported and tested:
-    - (fuji_model_name="fuji-1B-v3", llama_model_name="Llama-3.2-1B")
-    - (fuji_model_name="fuji-3B-v3", llama_model_name="Llama-3.2-3B")
-    - (fuji_model_name="fuji-8B-v3", llama_model_name="Llama-3.1-8B")
-    - (fuji_model_name="fuji-70B-v3", llama_model_name="Llama-3.1-70B")
+    - (fuji_model_name="fuji-7B-v2", llama_model_name="Llama-2-7b-hf")
+    - (fuji_model_name="fuji-70B-v2", llama_model_name="Llama-2-70b-hf")
 
     Args:
         llama: A Llama model with type LlamaForCausalLM.
@@ -278,6 +278,7 @@ def parameters_to_llama(state: dict, llama, use_gqa=2) -> dict:
     llama_state = llama.state_dict()
     num_layers = llama.config.num_hidden_layers
     hidden_size = llama.config.hidden_size
+    num_kv_heads = llama.config.num_key_value_heads
 
     if "lm_head" in state["decoder"]:
         llama_state["lm_head.weight"] = state["decoder"]["lm_head"]["weight"]
@@ -301,9 +302,26 @@ def parameters_to_llama(state: dict, llama, use_gqa=2) -> dict:
 
         # convert attention layers
         if use_gqa:
-            import pdb; pdb.set_trace()
-            # main difference between 2 and 3 is concat and stack since 3 uses GQA
-            raise Exception("Conversion for Llama3 not implemented")
+            qkv = jnp.permute_dims(
+                state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"]["attention"][
+                    "i_proj"
+                ]["i_proj"]["qkv_proj"]["weight"][idx],
+                (1, 2, 0),
+            )
+            # concat order q, k, v
+            llama_state[f"model.layers.{idx}.self_attn.q_proj.weight"] = (
+                axlearn_rope_to_transformers_rope(torch.from_numpy(np.array(qkv[:-2*num_kv_heads]))).reshape(
+                    -1, hidden_size
+                )
+            )
+            llama_state[f"model.layers.{idx}.self_attn.k_proj.weight"] = (
+                axlearn_rope_to_transformers_rope(torch.from_numpy(np.array(qkv[-2*num_kv_heads:-num_kv_heads]))).reshape(
+                    -1, hidden_size
+                )
+            )
+            llama_state[f"model.layers.{idx}.self_attn.v_proj.weight"] = qkv[-num_kv_heads:].reshape(
+                -1, hidden_size
+            )
         else:
             qkv = jnp.permute_dims(
                 state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"]["attention"][
