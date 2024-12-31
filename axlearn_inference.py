@@ -34,8 +34,8 @@ from utils import (
 )
 
 # config_name = "fuji-1B-v3"
-# config_name = "fuji-7B-v2"
-config_name = "fuji-70B-v2"
+config_name = "fuji-7B-v2"
+# config_name = "fuji-70B-v2"
 
 # Note: step folder need to be included for inference runner but not for checkpointer
 # to specify step folder for checkpointer, use the step parameter
@@ -139,7 +139,6 @@ def run_inference(texts):
         method_runner = infer_runner.create_method_runner(method="predict", prng_key=prng_key)
 
         for batch_ix, input_batch in enumerate(evaler.input.batches(eval_input_iter)):
-            import pdb; pdb.set_trace()
             input_ids = input_batch["input_ids"].tolist()
             input_texts = sentence_piece_vocab.tokenizer.decode_ids(input_ids)
             input_batch, input_batch_str_tensors = pop_string_tensors(input_batch)
@@ -291,7 +290,12 @@ def assert_top_k_allclose(x, y, atol, rtol, k=64):
     np.testing.assert_allclose(top_x, top_y, atol=atol, rtol=rtol, equal_nan=False)
 
 
-def assert_top_p_and_top_k_allclose(x, y, atol, rtol, k=64, p=0.99):
+def assert_top_p_and_top_k_allclose(x, y, atol_high, rtol_high, atol_low, rtol_low, threshold=1e-3, k=64, p=0.99):
+    """
+    the probability distribution has a long tail therefore it is not feasible
+    to have good single atol and rtol to both pass large values and cover small
+    values at the same time. So breaking down values into high and low values
+    """
     x_indices = np.argsort(x, axis=-1)[:,:,::-1]
     y_indices = np.argsort(y, axis=-1)[:,:,::-1]
 
@@ -329,15 +333,35 @@ def assert_top_p_and_top_k_allclose(x, y, atol, rtol, k=64, p=0.99):
 
     top_x_flat = np.asarray(top_x_flat)
     top_y_flat = np.asarray(top_y_flat)
-    print("smallest prob in top k and top p:", min(np.min(top_x_flat), np.min(top_y_flat)))
+    
+    high_indices = np.where(top_x_flat > threshold)
+    top_x_flat_high = top_x_flat[high_indices]
+    top_y_flat_high = top_y_flat[high_indices]
+    low_indices = np.where(top_x_flat <= threshold)
+    top_x_flat_low = top_x_flat[low_indices]
+    top_y_flat_low = top_y_flat[low_indices]
 
-    rdiff = relative_difference(top_x_flat, top_y_flat)
-    print("max top p/k difference", np.max(np.abs(top_x_flat - top_y_flat)))
-    print("mean top p/k difference", np.mean(np.abs(top_x_flat - top_y_flat)))
+    print("checkping higher end:")
+    print("smallest prob in top k and top p:", min(np.min(top_x_flat_high), np.min(top_y_flat_high)))
+
+    rdiff = relative_difference(top_x_flat_high, top_y_flat_high)
+    print("max top p/k difference", np.max(np.abs(top_x_flat_high - top_y_flat_high)))
+    print("mean top p/k difference", np.mean(np.abs(top_x_flat_high - top_y_flat_high)))
     print("max top p/k relative difference", np.max(rdiff))
     print("mean top p/k relative difference", np.mean(rdiff))
 
-    np.testing.assert_allclose(top_x_flat, top_y_flat, atol=atol, rtol=rtol, equal_nan=False)
+    np.testing.assert_allclose(top_x_flat_high, top_y_flat_high, atol=atol_high, rtol=rtol_high, equal_nan=False)
+
+    print("checkping lower end:")
+    print("smallest prob in top k and top p:", min(np.min(top_x_flat_low), np.min(top_y_flat_low)))
+
+    rdiff = relative_difference(top_x_flat_low, top_y_flat_low)
+    print("max top p/k difference", np.max(np.abs(top_x_flat_low - top_y_flat_low)))
+    print("mean top p/k difference", np.mean(np.abs(top_x_flat_low - top_y_flat_low)))
+    print("max top p/k relative difference", np.max(rdiff))
+    print("mean top p/k relative difference", np.mean(rdiff))
+
+    np.testing.assert_allclose(top_x_flat_low, top_y_flat_low, atol=atol_low, rtol=rtol_low, equal_nan=False)
 
 
 def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False, reverse=False):
@@ -415,8 +439,10 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
         atol = 2e-2
         rtol = 1e-4
     elif fuji_model_name == "fuji-7B-v2":
-        atol = 1e-3
-        rtol = 1e-4
+        atol = 7e-4
+        rtol = 1e-6
+        atol_low = 2e-5
+        rtol_low = 1e-6
     elif fuji_model_name == "fuji-8B-v3":
         atol = 2e-1
         rtol = 1e-4
@@ -427,24 +453,19 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
         atol = 2e-3
         rtol = 1e-4
 
-    import pdb; pdb.set_trace()
     # TODO should not do the softmax myself
     fuji_probs = np.asarray(jax.nn.softmax(aux["logits"]))
     llama_probs = torch.softmax(output.logits, dim=-1).numpy()
     assert isinstance(fuji_probs.dtype, np.dtypes.Float32DType)
 
     assert_top_k_allclose(llama_probs, fuji_probs, atol, rtol)
-    assert_top_p_allclose(llama_probs, fuji_probs, atol, rtol)
-    assert_top_p_and_top_k_allclose(llama_probs, fuji_probs, atol, rtol)
+    assert_top_p_allclose(llama_probs, fuji_probs, atol, rtol, p=0.99)
+    assert_top_p_and_top_k_allclose(llama_probs, fuji_probs, atol, rtol, atol_low, rtol_low, p=0.99)
     print("smallest fuji prob:", np.min(fuji_probs))
     print("smallest llama prob:", np.min(llama_probs))
 
     np.save("fuji_probs", fuji_probs)
     np.save("llama_probs", llama_probs)
-    # np.load("fuji_probs.npy")
-
-
-    # np.testing.assert_allclose(fuji_logits, llama_logits, atol=atol, equal_nan=False)
 
 
 def convert_and_save_checkpoint(
@@ -618,8 +639,8 @@ if __name__ == "__main__":
     # validate_conversion("fuji-1B-v3", "Llama-3.2-1B", load_true_model=True)
     # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True)
     # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=False)
-    # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True)
-    validate_conversion("fuji-70B-v2", "Llama-2-70b-hf", load_true_model=True, reverse=True)
+    validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True)
+    # validate_conversion("fuji-70B-v2", "Llama-2-70b-hf", load_true_model=True, reverse=True)
     # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=False)
     # convert_and_save_checkpoint("fuji-7B-v2", "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/baseline_34000", load_true_model=True, reverse=False, save_name="round_trip")
     # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True, fuji_model_path=CHECKPOINT_PATH, save_name="baseline_34000")
