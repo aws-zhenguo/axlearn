@@ -39,13 +39,16 @@ config_name = "fuji-7B-v2"
 
 # Note: step folder need to be included for inference runner but not for checkpointer
 # to specify step folder for checkpointer, use the step parameter
-# CHECKPOINT_PATH = "/fsx/thiamha/fs/runs/artifacts/fs_main2/tg6.7b/241122003124/axlearn_out/checkpoints"
 if config_name == "fuji-1B-v3":
     CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/test_01/11132/axlearn_out/checkpoints"
+    TRN_CHECKPOINT = False
+    USE_GQA = False
     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/test_01/11130/axlearn_out/checkpoints"
     sentencepiece_model_name = "bpe_128k_c4.model"
 elif config_name == "fuji-7B-v2":
     CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000"
+    TRN_CHECKPOINT = False
+    USE_GQA = False
     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints"
     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/fuji-7B-v2/step_00022794"
     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/round_trip/step_00022794"
@@ -53,7 +56,10 @@ elif config_name == "fuji-7B-v2":
     converted_tokenizer_path = "ConvertedTokenizer"
 else:
     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/trn_baselines/611/axlearn_out/checkpoints/step_00010000"
-    CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10985/axlearn_out/checkpoints/step_00035000"
+    # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10985/axlearn_out/checkpoints/step_00035000"
+    CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/241230232345/axlearn_out/checkpoints/step_00000002"
+    TRN_CHECKPOINT = True
+    USE_GQA = True
     sentencepiece_model_name = "bpe_32k_c4.model"
     converted_tokenizer_path = "ConvertedTokenizer"
 
@@ -168,13 +174,6 @@ def run_inference(texts):
     return results
 
 
-def get_version(model_name):
-    if "v3" in model_name:
-        return 3
-    else:
-        return 2
-
-
 def get_sentence_piece_tokenizer():
     vocab_cfg = config_for_function(vocab).set(
         sentencepiece_model_name=sentencepiece_model_name, num_extra_ids=None
@@ -183,230 +182,37 @@ def get_sentence_piece_tokenizer():
     return sentence_piece_vocab
 
 
-def relative_difference(x, y):
-    # May get hugh relative difference since some logits would be super small
-    return np.abs(x - y) / np.min([np.abs(x), np.abs(y)], axis=0)
-
-def average_top_k_jaccard_similarity(x, y, max_k=100):
-    ks = [i for i in range(1, max_k + 1, 5)]
-    jaccard_indices = defaultdict(int)
-    batch_size, seq_len, vocab_size = x.shape
-
-    for x_sequence, y_sequence in zip(x, y):
-        for x_logits, y_logits in zip(x_sequence, y_sequence):
-            for k in ks:
-                top_x_indices = x_logits.argsort()[::-1]
-                top_y_indices = y_logits.argsort()[::-1]
-                top_x_set = set(top_x_indices[:k])
-                top_y_set = set(top_y_indices[:k])
-                jaccard_index = len(top_x_set.intersection(top_y_set)) / len(top_x_set.union(top_y_set))
-                jaccard_indices[k] += jaccard_index
-
-    for k in jaccard_indices:
-        jaccard_indices[k] /= (batch_size * seq_len)
-    return jaccard_indices
-
-def relative_difference_with_top_p(x, y):
-    return None
-
-
-def get_top_p(x, p):
-    total = 0.0
-    top_values = list()
-    for val in x:
-        total += val
-        top_values.append(val)
-        if total > p:
-            break
-    return top_values
-
-
-def get_top_p_indices(x, x_indices, p):
-    total = 0.0
-    top_p_indices = list()
-    for idx in x_indices:
-        total += x[idx]
-        top_p_indices.append(idx)
-        if total > p:
-            break
-    return top_p_indices
-
-
-def ndarray_apply_order(x, indices):
-    # x[indices] does not work for ndarray with dimension higher than 2
-    # since different indices need to be applied on different array
-    result = list()
-    for i, seq in enumerate(x):
-        new_seq = list()
-        for j, tokens in enumerate(seq):
-            new_seq.append(tokens[indices[i][j]])
-        result.append(new_seq)
-    return np.asarray(result)
-
-
-def assert_top_p_allclose(x, y, atol, rtol, p=0.99):
-    # x = np.sort(x, axis=-1)[:,:,::-1]
-    # y = np.sort(y, axis=-1)[:,:,::-1]
-    x_indices = np.argsort(x, axis=-1)[:,:,::-1]
-
-    top_x_flat = list()
-    top_y_flat = list()
-    for i, (x_seq, y_seq) in enumerate(zip(x, y)):
-        for j, (x_token, y_token) in enumerate(zip(x_seq, y_seq)):
-            top_p_indices = get_top_p_indices(x_token, x_indices[i][j], p)
-            top_x = x_token[top_p_indices]
-            top_y = y_token[top_p_indices]
-
-            top_x_flat.extend(top_x)
-            top_y_flat.extend(top_y)
-
-    top_x_flat = np.asarray(top_x_flat)
-    top_y_flat = np.asarray(top_y_flat)
-    print("smallest prob in top p:", min(np.min(top_x_flat), np.min(top_y_flat)))
-
-    rdiff = relative_difference(top_x_flat, top_y_flat)
-    print("max top p difference", np.max(np.abs(top_x_flat - top_y_flat)))
-    print("mean top p difference", np.mean(np.abs(top_x_flat - top_y_flat)))
-    print("max top p relative difference", np.max(rdiff))
-    print("mean top p relative difference", np.mean(rdiff))
-
-    np.testing.assert_allclose(top_x_flat, top_y_flat, atol=atol, rtol=rtol, equal_nan=False)
-
-
-def assert_top_k_allclose(x, y, atol, rtol, k=64):
-    x_indices = np.argsort(x, axis=-1)[:,:,::-1]
-    top_x = ndarray_apply_order(x, x_indices)[:,:,:k]
-    top_y = ndarray_apply_order(y, x_indices)[:,:,:k]
-    # x = np.sort(x, axis=-1)[:,:,::-1]
-    # y = np.sort(y, axis=-1)[:,:,::-1]
-    print("smallest prob in top k:", min(np.min(top_x), np.min(top_y)))
-
-    rdiff = relative_difference(top_x, top_y)
-    print("max top k difference", np.max(np.abs(top_x - top_y)))
-    print("mean top k difference", np.mean(np.abs(top_x - top_y)))
-    print("max top k relative difference", np.max(rdiff))
-    print("mean top k relative difference", np.mean(rdiff))
-
-    np.testing.assert_allclose(top_x, top_y, atol=atol, rtol=rtol, equal_nan=False)
-
-
-def assert_top_p_and_top_k_allclose(x, y, atol_high, rtol_high, atol_low, rtol_low, threshold=1e-3, k=64, p=0.99):
-    """
-    the probability distribution has a long tail therefore it is not feasible
-    to have good single atol and rtol to both pass large values and cover small
-    values at the same time. So breaking down values into high and low values
-    """
-    x_indices = np.argsort(x, axis=-1)[:,:,::-1]
-    y_indices = np.argsort(y, axis=-1)[:,:,::-1]
-
-    top_x_flat = list()
-    top_y_flat = list()
-    for i, (x_seq, y_seq) in enumerate(zip(x, y)):
-        for j, (x_token, y_token) in enumerate(zip(x_seq, y_seq)):
-            top_x_indices = list()
-            x_total = 0.0
-
-            # top p / k in x
-            for idx in x_indices[i][j]:
-                x_total += x_token[idx]
-                top_x_indices.append(idx)
-
-                if x_total > p and len(top_x_indices) >= k:
-                    break
-
-            top_y_indices = list()
-            y_total = 0.0
-            # top p / k in y
-            for idx in y_indices[i][j]:
-                y_total += y_token[idx]
-                top_y_indices.append(idx)
-
-                if y_total > p and len(top_y_indices) >= k:
-                    break
-
-            top_indices = list(set(top_x_indices).union(set(top_y_indices)))
-            top_x = x_token[top_indices]
-            top_y = y_token[top_indices]
-
-            top_x_flat.extend(top_x)
-            top_y_flat.extend(top_y)
-
-    top_x_flat = np.asarray(top_x_flat)
-    top_y_flat = np.asarray(top_y_flat)
-    
-    high_indices = np.where(top_x_flat > threshold)
-    top_x_flat_high = top_x_flat[high_indices]
-    top_y_flat_high = top_y_flat[high_indices]
-    low_indices = np.where(top_x_flat <= threshold)
-    top_x_flat_low = top_x_flat[low_indices]
-    top_y_flat_low = top_y_flat[low_indices]
-
-    print("checkping higher end:")
-    print("smallest prob in top k and top p:", min(np.min(top_x_flat_high), np.min(top_y_flat_high)))
-
-    rdiff = relative_difference(top_x_flat_high, top_y_flat_high)
-    print("max top p/k difference", np.max(np.abs(top_x_flat_high - top_y_flat_high)))
-    print("mean top p/k difference", np.mean(np.abs(top_x_flat_high - top_y_flat_high)))
-    print("max top p/k relative difference", np.max(rdiff))
-    print("mean top p/k relative difference", np.mean(rdiff))
-
-    np.testing.assert_allclose(top_x_flat_high, top_y_flat_high, atol=atol_high, rtol=rtol_high, equal_nan=False)
-
-    print("checkping lower end:")
-    print("smallest prob in top k and top p:", min(np.min(top_x_flat_low), np.min(top_y_flat_low)))
-
-    rdiff = relative_difference(top_x_flat_low, top_y_flat_low)
-    print("max top p/k difference", np.max(np.abs(top_x_flat_low - top_y_flat_low)))
-    print("mean top p/k difference", np.mean(np.abs(top_x_flat_low - top_y_flat_low)))
-    print("max top p/k relative difference", np.max(rdiff))
-    print("mean top p/k relative difference", np.mean(rdiff))
-
-    np.testing.assert_allclose(top_x_flat_low, top_y_flat_low, atol=atol_low, rtol=rtol_low, equal_nan=False)
-
-
-def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False, reverse=False):
+def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False, reverse=False, texts=None):
     """Run a forward pass and compare logits to validate conversion between fuji and llama model."""
     fuji, state, llama = get_fuji_and_llama(
         fuji_model_name, llama_model_name, load_true_model, reverse, fuji_model_path=CHECKPOINT_PATH
     )
 
-    # generate dummy input data
-    # ids = jax.random.randint(jax.random.PRNGKey(seed), shape=(2, 2), minval=0, maxval=12345)
-    # end to end test with texts
     tokenizer = get_sentence_piece_tokenizer()
     def pad_list(l, max_len, fill_value=tokenizer.pad_id):
         return [tokenizer.eos_id] + l + [fill_value] * (max_len - len(l) - 1)
 
-    texts = [
-        "How are you doing?",
-        "who is the president of the US now?",
-        "The USA is in which continent?",
-        "California is a state in",
-        "Can you tell me something about California state?\n",
-    ]
-    ids = tokenizer.encode(texts)
+    if texts:
+        # end to end test with texts
+        ids = tokenizer.encode(texts)
+    else:
+        # generate dummy input data
+        ids = jax.random.randint(jax.random.PRNGKey(seed), shape=(2, 2), minval=0, maxval=12345)
+
     padded_ids = [pad_list(cur_ids, 6) for cur_ids in ids]
     ids = [cur_ids[:4] for cur_ids in padded_ids]
     target_ids = [cur_ids[1:5] for cur_ids in padded_ids]
     torch_ids = torch.from_numpy(np.asarray(ids))
     torch_target_ids = torch.from_numpy(np.asarray(target_ids))
 
-    # conversion for llama2 and llama3 would be different
-    # for example llama3 would use GQA and some of the model also share weights between lm_head and emb
-    if "70B" in fuji_model_name:
-        use_gqa = True
-    else:
-        use_gqa = False
-
     # convert params
     if reverse:
-        llama_state_dict = parameters_to_llama(state, llama, use_gqa)
+        llama_state_dict = parameters_to_llama(state, llama, USE_GQA, trn_checkpoint=TRN_CHECKPOINT)
         llama.load_state_dict(llama_state_dict)
     else:
-        state = parameters_from_llama(llama, state, use_gqa)
+        state = parameters_from_llama(llama, state, USE_GQA, trn_checkpoint=TRN_CHECKPOINT)
 
     input_batch = {"input_ids": jnp.asarray(ids), "target_labels": jnp.asarray(target_ids)}
-    # (_, aux), _ = functional(
     (loss, aux), output_collection = functional(
         fuji,
         is_training=False,
@@ -431,41 +237,14 @@ def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False
     # jaccard_indices = average_top_k_jaccard_similarity(fuji_logits, llama_logits)
     assert isinstance(aux["logits"].dtype, np.dtypes.Float32DType)
 
-    # The difference is caused by the SDPA attention layer. The deeper the larger the error.
-    if fuji_model_name == "fuji-1B-v3":
-        atol = 3e-2
-        rtol = 1e-4
-    elif fuji_model_name == "fuji-3B-v3":
-        atol = 2e-2
-        rtol = 1e-4
-    elif fuji_model_name == "fuji-7B-v2":
-        atol = 7e-4
-        rtol = 1e-6
-        atol_low = 2e-5
-        rtol_low = 1e-6
-    elif fuji_model_name == "fuji-8B-v3":
-        atol = 2e-1
-        rtol = 1e-4
-    elif fuji_model_name == "fuji-70B-v3":
-        atol = 2.0
-        rtol = 1e-4
-    else:
-        atol = 2e-3
-        rtol = 1e-4
 
     # TODO should not do the softmax myself
     fuji_probs = np.asarray(jax.nn.softmax(aux["logits"]))
     llama_probs = torch.softmax(output.logits, dim=-1).numpy()
     assert isinstance(fuji_probs.dtype, np.dtypes.Float32DType)
 
-    assert_top_k_allclose(llama_probs, fuji_probs, atol, rtol)
-    assert_top_p_allclose(llama_probs, fuji_probs, atol, rtol, p=0.99)
-    assert_top_p_and_top_k_allclose(llama_probs, fuji_probs, atol, rtol, atol_low, rtol_low, p=0.99)
-    print("smallest fuji prob:", np.min(fuji_probs))
-    print("smallest llama prob:", np.min(llama_probs))
-
-    np.save("fuji_probs", fuji_probs)
-    np.save("llama_probs", llama_probs)
+    np.save(f"{fuji_model_name}_probs", fuji_probs)
+    np.save(f"{llama_model_name}_probs", llama_probs)
 
 
 def convert_and_save_checkpoint(
@@ -474,15 +253,11 @@ def convert_and_save_checkpoint(
     fuji, state, llama = get_fuji_and_llama(
         fuji_model_name, llama_model_name, load_true_model=load_true_model, reverse=reverse, fuji_model_path=fuji_model_path
     )
-    if "70B" in fuji_model_name:
-        use_gqa = True
-    else:
-        use_gqa = False
 
     # convert params
     if reverse:
         llama_state_dict = parameters_to_llama(
-            state, llama, use_gqa
+            state, llama, USE_GQA
         )
         llama.load_state_dict(llama_state_dict)
         checkpoint_path = f"/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/{save_name}"
@@ -491,7 +266,7 @@ def convert_and_save_checkpoint(
         # copy_tokenizer_files(converted_tokenizer_path, checkpoint_path)
         # Remember to copy the generation_config.json to checkpoint folder to get similar results
     else:
-        state = parameters_from_llama(llama, state, use_gqa)
+        state = parameters_from_llama(llama, state, USE_GQA)
         checkpoint_path = f"/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/{save_name}"
 
         save_axlearn_checkpoint(fuji, state, checkpoint_path, get_mesh(trainer_config))
@@ -630,17 +405,14 @@ if __name__ == "__main__":
         "The USA is in which continent?",
         "California is a state in",
         "Can you tell me something about California state?\n",
-        "California is a state in",
-        "California is a state in",
-        "California is a state in",
     ]
     # run_inference(texts)
     # generate(texts)
-    # validate_conversion("fuji-1B-v3", "Llama-3.2-1B", load_true_model=True)
-    # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True)
-    # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=False)
-    validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True)
-    # validate_conversion("fuji-70B-v2", "Llama-2-70b-hf", load_true_model=True, reverse=True)
+    # validate_conversion("fuji-1B-v3", "Llama-3.2-1B", load_true_model=True, texts=texts)
+    # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, texts=texts)
+    # validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=False, texts=texts)
+    validate_conversion("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True, texts=texts)
+    # validate_conversion("fuji-70B-v2", "Llama-2-70b-hf", load_true_model=False, reverse=True, texts=texts)
     # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=False)
     # convert_and_save_checkpoint("fuji-7B-v2", "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/baseline_34000", load_true_model=True, reverse=False, save_name="round_trip")
     # convert_and_save_checkpoint("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True, reverse=True, fuji_model_path=CHECKPOINT_PATH, save_name="baseline_34000")
