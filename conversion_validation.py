@@ -241,7 +241,7 @@ texts = [
 ]
 
 
-def run_gpu_checkpoint_tests(load_true_model=False):
+def run_gpu_checkpoint_tests(load_true_model=False, reverse=True):
     from axlearn_inference import validate_conversion
 
     print("Converting and validating Axlearn GPU to HF on 7B...")
@@ -249,7 +249,7 @@ def run_gpu_checkpoint_tests(load_true_model=False):
         "fuji-7B-v2",
         "Llama-2-7b-hf",
         load_true_model=load_true_model,
-        reverse=True,
+        reverse=reverse,
         texts=texts,
         fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000",
         trn_checkpoint=False,
@@ -261,15 +261,16 @@ def run_gpu_checkpoint_tests(load_true_model=False):
         "fuji-70B-v2",
         "Llama-2-70b-hf",
         load_true_model=load_true_model,
-        reverse=True,
+        reverse=reverse,
         texts=texts,
+        fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10985/axlearn_out/checkpoints/step_00035000",
         use_gqa=True,
         trn_checkpoint=False,
     )
     validate_probs("fuji-70B-v2", "Llama-2-70b-hf")
 
 
-def run_trn_checkpoint_tests(load_true_model=False):
+def run_trn_checkpoint_tests(load_true_model=False, reverse=True):
     from axlearn_inference import validate_conversion
 
     print(
@@ -280,7 +281,7 @@ def run_trn_checkpoint_tests(load_true_model=False):
         "fuji-7B-v2",
         "Llama-2-7b-hf",
         load_true_model=load_true_model,
-        reverse=True,
+        reverse=reverse,
         texts=texts,
         trn_checkpoint=True,
     )
@@ -291,7 +292,7 @@ def run_trn_checkpoint_tests(load_true_model=False):
         "fuji-70B-v2",
         "Llama-2-70b-hf",
         load_true_model=load_true_model,
-        reverse=True,
+        reverse=reverse,
         texts=texts,
         fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/241230232345/axlearn_out/checkpoints/step_00000002",
         use_gqa=True,
@@ -303,7 +304,9 @@ def run_trn_checkpoint_tests(load_true_model=False):
 
 
 if __name__ == "__main__":
-    # validate_probs("fuji-7B-v2", "Llama-2-7b-hf")
+    validate_probs("fuji-7B-v2", "Llama-2-7b-hf")
     # validate_probs("fuji-70B-v2", "Llama-2-70b-hf")
     # run_gpu_checkpoint_tests()
-    run_trn_checkpoint_tests()
+    # run_trn_checkpoint_tests()
+    # run_gpu_checkpoint_tests(reverse=False)
+    # run_trn_checkpoint_tests(reverse=False)

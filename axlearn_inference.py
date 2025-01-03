@@ -438,6 +438,8 @@ if __name__ == "__main__":
     # checkpoint_path = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000"
     # run_inference(texts, config_name, checkpoint_path)
     # generate(texts, config_name, checkpoint_path)
+
+    # Llama to Axlearn 7B GPU true model 
     # validate_conversion(
     #     "fuji-7B-v2",
     #     "Llama-2-7b-hf",
@@ -446,6 +448,8 @@ if __name__ == "__main__":
     #     trn_checkpoint=False,
     #     use_gqa=False,
     # )
+
+    # Llama to Axlearn 7B GPU dummy model
     # validate_conversion(
     #     "fuji-7B-v2",
     #     "Llama-2-7b-hf",
@@ -454,6 +458,8 @@ if __name__ == "__main__":
     #     trn_checkpoint=False,
     #     use_gqa=False,
     # )
+
+    # Axlearn to Llama 7B GPU true model
     # validate_conversion(
     #     "fuji-7B-v2",
     #     "Llama-2-7b-hf",
@@ -464,16 +470,51 @@ if __name__ == "__main__":
     #     trn_checkpoint=False,
     #     use_gqa=False,
     # )
+
+    # Axlearn to Llama 70B GPU true model
+    # validate_conversion(
+    #     "fuji-70B-v2",
+    #     "Llama-2-70b-hf",
+    #     load_true_model=True,
+    #     reverse=True,
+    #     texts=texts,
+    #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10985/axlearn_out/checkpoints/step_00035000",
+    #     trn_checkpoint=False,
+    #     use_gqa=True,
+    # )
+
+    # Llama to Axlearn 7B TRN dummy model
+    # validate_conversion(
+    #     "fuji-7B-v2",
+    #     "Llama-2-7b-hf",
+    #     load_true_model=False,
+    #     texts=texts,
+    #     trn_checkpoint=True,
+    #     use_gqa=False,
+    # )
+
+    # Llama to Axlearn 7B TRN dummy model
     validate_conversion(
         "fuji-70B-v2",
         "Llama-2-70b-hf",
-        load_true_model=True,
-        reverse=True,
+        load_true_model=False,
         texts=texts,
-        fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/241230232345/axlearn_out/checkpoints/step_00000002",
         trn_checkpoint=True,
         use_gqa=True,
     )
+
+    # Axlearn to Llama 70B TRN true model
+    # validate_conversion(
+    #     "fuji-70B-v2",
+    #     "Llama-2-70b-hf",
+    #     load_true_model=True,
+    #     reverse=True,
+    #     texts=texts,
+    #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/241230232345/axlearn_out/checkpoints/step_00000002",
+    #     trn_checkpoint=True,
+    #     use_gqa=True,
+    # )
+
     # convert_and_save_checkpoint(
     #     "fuji-7B-v2",
     #     "Llama-2-7b-hf",
@@ -509,4 +550,14 @@ if __name__ == "__main__":
     #     save_name="random_init",
     #     trn_checkpoint=False,
     #     use_gqa=False,
+    # )
+    # convert_and_save_checkpoint(
+    #     "fuji-70B-v2",
+    #     "Llama-2-70b-hf",
+    #     load_true_model=True,
+    #     reverse=True,
+    #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/241230232345/axlearn_out/checkpoints/step_00000002",
+    #     save_name="trn_70B",
+    #     trn_checkpoint=True,
+    #     use_gqa=True,
     # )

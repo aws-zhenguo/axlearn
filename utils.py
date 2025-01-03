@@ -173,10 +173,9 @@ def axlearn_rope_to_transformers_rope(vector: jax.Array) -> jax.Array:
     return vector.reshape(n, h, d)
 
 
-# TODO add HF to Axlearn conversion for TRN checkpoint
-
-
-def parameters_from_llama(llama: LlamaForCausalLM, state: dict, use_gqa=False) -> dict:
+def parameters_from_llama(
+    llama: LlamaForCausalLM, state: dict, use_gqa=False, trn_checkpoint=False
+) -> dict:
     """Converts llama weights from huggingface model to fuji state.
     Conversion for llama2 and llama3 would be different. For example 7B model does not use GQA,
     and fuji 7B model also share weights between lm_head and emb.
@@ -191,6 +190,18 @@ def parameters_from_llama(llama: LlamaForCausalLM, state: dict, use_gqa=False) -
 
     Returns:
         NestedTensor containing the same structure as state, but the weights are from llama.
+    """
+    if trn_checkpoint:
+        return _parameters_from_llama_trn(llama, state, use_gqa)
+    else:
+        return _parameters_from_llama(llama, state, use_gqa)
+
+
+def _parameters_from_llama(llama: LlamaForCausalLM, state: dict, use_gqa=False) -> dict:
+    """Convert llama model weight to fuji model weight.
+
+    Conversion for checkpoint trained in TRN and GPU are different since TRN replaced
+    RepeatedTransformerLayer with StackedTransformerLayer and FusedQKVLinear with GroupedQKVLinear.
     """
     # Copy the nested dict. No need to deep copy the data since it will be replaced.
     state = jax.tree.map(lambda x: x, state)
@@ -216,7 +227,7 @@ def parameters_from_llama(llama: LlamaForCausalLM, state: dict, use_gqa=False) -
         "i_proj"
     ]["i_proj"]["qkv_proj"][
         "weight"
-    ].shape  # (n_layers, d, n, h)
+    ].shape  # (n_layers, hidden_dimension, num_head, head_dimension)
 
     for layer in llama.model.layers:
         gate_proj.append(layer.mlp.gate_proj.weight.transpose(0, 1))
@@ -275,6 +286,88 @@ def parameters_from_llama(llama: LlamaForCausalLM, state: dict, use_gqa=False) -
     state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["norm"]["scale"] = (
         torch.stack(post_attention_norm)
     )
+    state["decoder"]["output_norm"]["scale"] = llama.model.norm.weight
+    return as_jax_tensor(state)
+
+
+def _parameters_from_llama_trn(llama: LlamaForCausalLM, state: dict, use_gqa=False) -> dict:
+    # Copy the nested dict. No need to deep copy the data since it will be replaced.
+    state = jax.tree.map(lambda x: x, state)
+    if "lm_head" in state["decoder"]:
+        if id(llama.model.embed_tokens.weight) == id(llama.lm_head.weight):
+            raise ValueError("The embed_tokens and lm_head should not share weights.")
+        state["decoder"]["lm_head"]["weight"] = llama.lm_head.weight
+    elif id(llama.model.embed_tokens.weight) != id(llama.lm_head.weight):
+        raise ValueError("The embed_tokens and lm_head should share weights")
+
+    state["decoder"]["emb"]["token_emb"]["weight"] = llama.model.embed_tokens.weight
+    o_shape = state["decoder"]["transformer"]["layer0"]["self_attention"]["attention"]["o_proj"][
+        "weight"
+    ].shape
+
+    for idx, layer in enumerate(llama.model.layers):
+        state["decoder"]["transformer"][f"layer{idx}"]["feed_forward"]["linear1_0"]["weight"] = (
+            layer.mlp.gate_proj.weight.transpose(0, 1)
+        )
+        state["decoder"]["transformer"][f"layer{idx}"]["feed_forward"]["linear1_1"]["weight"] = (
+            layer.mlp.up_proj.weight.transpose(0, 1)
+        )
+        state["decoder"]["transformer"][f"layer{idx}"]["feed_forward"]["linear2"]["weight"] = (
+            layer.mlp.down_proj.weight.transpose(0, 1)
+        )
+
+        # Llama3 and Llama2 70B uses GQA, but Llama2 7B does not
+        # TODO a more proper naming would be replacing use_gqa with fuse_qkv for this function
+        if use_gqa:
+            # Do NOT use i_shape[-2] in the following for qkv since they should be different when using GQA
+            i_shape = state["decoder"]["transformer"]["layer0"]["self_attention"]["attention"][
+                "i_proj"
+            ]["i_proj"]["q_proj"]["weight"].shape
+            state["decoder"]["transformer"][f"layer{idx}"]["self_attention"]["attention"]["i_proj"][
+                "i_proj"
+            ]["q_proj"]["weight"] = transformers_rope_to_axlearn_rope(
+                layer.self_attn.q_proj.weight.reshape(-1, i_shape[-1], i_shape[-3])
+            ).permute(2, 0, 1)
+            state["decoder"]["transformer"][f"layer{idx}"]["self_attention"]["attention"]["i_proj"][
+                "i_proj"
+            ]["k_proj"]["weight"] = transformers_rope_to_axlearn_rope(
+                layer.self_attn.k_proj.weight.reshape(-1, i_shape[-1], i_shape[-3])
+            ).permute(2, 0, 1)
+            state["decoder"]["transformer"][f"layer{idx}"]["self_attention"]["attention"]["i_proj"][
+                "i_proj"
+            ]["v_proj"]["weight"] = layer.self_attn.v_proj.weight.reshape(
+                -1, i_shape[-1], i_shape[-3]
+            ).permute(2, 0, 1)
+        else:
+            i_shape = state["decoder"]["transformer"]["layer0"]["self_attention"]["attention"][
+                "i_proj"
+            ]["i_proj"]["qkv_proj"]["weight"].shape
+            state["decoder"]["transformer"][f"layer{idx}"]["self_attention"]["attention"]["i_proj"][
+                "i_proj"
+            ]["qkv_proj"]["weight"] = torch.stack(
+                [
+                    transformers_rope_to_axlearn_rope(
+                        layer.self_attn.q_proj.weight.reshape(-1, i_shape[-1], i_shape[-3])
+                    ),
+                    transformers_rope_to_axlearn_rope(
+                        layer.self_attn.k_proj.weight.reshape(-1, i_shape[-1], i_shape[-3])
+                    ),
+                    layer.self_attn.v_proj.weight.reshape(-1, i_shape[-1], i_shape[-3]),
+                ],
+                dim=0,
+            ).permute(
+                [0, 3, 1, 2]
+            )
+        state["decoder"]["transformer"][f"layer{idx}"]["self_attention"]["attention"]["o_proj"][
+            "weight"
+        ] = layer.self_attn.o_proj.weight.reshape(-1, o_shape[-2], o_shape[-1])
+        state["decoder"]["transformer"][f"layer{idx}"]["self_attention"]["norm"][
+            "scale"
+        ] = layer.input_layernorm.weight
+        state["decoder"]["transformer"][f"layer{idx}"]["feed_forward"]["norm"][
+            "scale"
+        ] = layer.post_attention_layernorm.weight
+
     state["decoder"]["output_norm"]["scale"] = llama.model.norm.weight
     return as_jax_tensor(state)
 
@@ -431,9 +524,10 @@ def _parameters_to_llama_trn(state: dict, llama, use_gqa=False) -> dict:
             ].transpose()
         )
 
-        # import pdb; pdb.set_trace()
         # convert attention layers
         # in Apoorv's branch, 70B model uses GroupedQKVLinear and 7B model uses FusedQKVLinear
+        # TODO a more proper naming would be replacing use_gqa with fuse_qkv for this function
+        # fuse_qkv = not use_gqa
         if use_gqa:
             q = jax_to_torch(
                 jnp.permute_dims(
