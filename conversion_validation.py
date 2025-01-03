@@ -232,24 +232,26 @@ def validate_probs(fuji_model_name, llama_model_name):
     )
 
 
-def run_tests():
-    from axlearn_inference import validate_conversion
+texts = [
+    "How are you doing?",
+    "who is the president of the US now?",
+    "The USA is in which continent?",
+    "California is a state in",
+    "Can you tell me something about California state?\n",
+]
 
-    texts = [
-        "How are you doing?",
-        "who is the president of the US now?",
-        "The USA is in which continent?",
-        "California is a state in",
-        "Can you tell me something about California state?\n",
-    ]
+
+def run_gpu_checkpoint_tests(load_true_model=False):
+    from axlearn_inference import validate_conversion
 
     print("Converting and validating Axlearn GPU to HF on 7B...")
     validate_conversion(
         "fuji-7B-v2",
         "Llama-2-7b-hf",
-        load_true_model=False,
+        load_true_model=load_true_model,
         reverse=True,
         texts=texts,
+        fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000",
         trn_checkpoint=False,
     )
     validate_probs("fuji-7B-v2", "Llama-2-7b-hf")
@@ -258,7 +260,7 @@ def run_tests():
     validate_conversion(
         "fuji-70B-v2",
         "Llama-2-70b-hf",
-        load_true_model=False,
+        load_true_model=load_true_model,
         reverse=True,
         texts=texts,
         use_gqa=True,
@@ -266,11 +268,18 @@ def run_tests():
     )
     validate_probs("fuji-70B-v2", "Llama-2-70b-hf")
 
+
+def run_trn_checkpoint_tests(load_true_model=False):
+    from axlearn_inference import validate_conversion
+
+    print(
+        "Make sure StackedTransformerLayer and GroupedQKVLinear are used when converting TRN ckpt!"
+    )
     print("Converting and validating Axlearn TRN to HF on 7B...")
     validate_conversion(
         "fuji-7B-v2",
         "Llama-2-7b-hf",
-        load_true_model=False,
+        load_true_model=load_true_model,
         reverse=True,
         texts=texts,
         trn_checkpoint=True,
@@ -281,9 +290,10 @@ def run_tests():
     validate_conversion(
         "fuji-70B-v2",
         "Llama-2-70b-hf",
-        load_true_model=False,
+        load_true_model=load_true_model,
         reverse=True,
         texts=texts,
+        fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/241230232345/axlearn_out/checkpoints/step_00000002",
         use_gqa=True,
         trn_checkpoint=True,
     )
@@ -294,4 +304,6 @@ def run_tests():
 
 if __name__ == "__main__":
     # validate_probs("fuji-7B-v2", "Llama-2-7b-hf")
-    validate_probs("fuji-70B-v2", "Llama-2-70b-hf")
+    # validate_probs("fuji-70B-v2", "Llama-2-70b-hf")
+    # run_gpu_checkpoint_tests()
+    run_trn_checkpoint_tests()
