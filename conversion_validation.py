@@ -3,6 +3,7 @@ import numpy as np
 DEFAULT_K = 64
 DEFAULT_P = 0.99
 
+
 def relative_difference(x, y):
     # May get hugh relative difference since some logits would be super small
     return np.abs(x - y) / np.min([np.abs(x), np.abs(y)], axis=0)
@@ -216,14 +217,81 @@ def validate_probs(fuji_model_name, llama_model_name):
     threshold = max(threshold, threshold_min)
     print("threshold:", threshold)
 
-    import pdb; pdb.set_trace()
     # (0.00065897405 - 3.4e-5) / 0.19473135
     # assert_top_k_allclose(llama_probs, fuji_probs, atol, rtol)
     # assert_top_p_allclose(llama_probs, fuji_probs, atol, rtol, p=0.99)
     assert_top_p_and_top_k_allclose(
-        llama_probs, fuji_probs, atol_high, rtol_high, atol_low, rtol_low, threshold=threshold, p=0.99
+        llama_probs,
+        fuji_probs,
+        atol_high,
+        rtol_high,
+        atol_low,
+        rtol_low,
+        threshold=threshold,
+        p=0.99,
     )
 
 
-if __name__ == "__main__":
+def run_tests():
+    from axlearn_inference import validate_conversion
+
+    texts = [
+        "How are you doing?",
+        "who is the president of the US now?",
+        "The USA is in which continent?",
+        "California is a state in",
+        "Can you tell me something about California state?\n",
+    ]
+
+    print("Converting and validating Axlearn GPU to HF on 7B...")
+    validate_conversion(
+        "fuji-7B-v2",
+        "Llama-2-7b-hf",
+        load_true_model=False,
+        reverse=True,
+        texts=texts,
+        trn_checkpoint=False,
+    )
     validate_probs("fuji-7B-v2", "Llama-2-7b-hf")
+
+    print("Converting and validating Axlearn GPU to HF on 70B...")
+    validate_conversion(
+        "fuji-70B-v2",
+        "Llama-2-70b-hf",
+        load_true_model=False,
+        reverse=True,
+        texts=texts,
+        use_gqa=True,
+        trn_checkpoint=False,
+    )
+    validate_probs("fuji-70B-v2", "Llama-2-70b-hf")
+
+    print("Converting and validating Axlearn TRN to HF on 7B...")
+    validate_conversion(
+        "fuji-7B-v2",
+        "Llama-2-7b-hf",
+        load_true_model=False,
+        reverse=True,
+        texts=texts,
+        trn_checkpoint=True,
+    )
+    validate_probs("fuji-7B-v2", "Llama-2-7b-hf")
+
+    print("Converting and validating Axlearn TRN to HF on 70B...")
+    validate_conversion(
+        "fuji-70B-v2",
+        "Llama-2-70b-hf",
+        load_true_model=False,
+        reverse=True,
+        texts=texts,
+        use_gqa=True,
+        trn_checkpoint=True,
+    )
+    validate_probs("fuji-70B-v2", "Llama-2-70b-hf")
+
+    # TODO add HF to Axlearn test case
+
+
+if __name__ == "__main__":
+    # validate_probs("fuji-7B-v2", "Llama-2-7b-hf")
+    validate_probs("fuji-70B-v2", "Llama-2-70b-hf")

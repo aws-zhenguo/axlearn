@@ -15,10 +15,7 @@ from axlearn.common.checkpointer import Checkpointer, CheckpointValidationType
 from axlearn.common.decoder import LmHead
 from axlearn.experiments.text.gpt import c4_trainer
 from axlearn.common.inference import InferenceRunner, _InferenceRunnerState
-from axlearn.common.utils import (
-    PartitionSpec,
-    TensorSpec,
-)
+from axlearn.common.utils import PartitionSpec, TensorSpec
 
 
 seed = 123
@@ -29,6 +26,7 @@ def get_mesh(trainer_config):
     mesh = jax.sharding.Mesh(devices, trainer_config.mesh_axis_names)
     return mesh
 
+
 def init_infer_runner(trainer_config, checkpoint_path):
     # trainer_config.set(dir=CHECKPOINT_PATH)
 
@@ -37,7 +35,6 @@ def init_infer_runner(trainer_config, checkpoint_path):
     infer_runner_config.init_state_builder.set(dir=checkpoint_path)
     infer_runner = infer_runner_config.instantiate(parent=None)
     return infer_runner, infer_runner_config
-
 
 
 def get_checkpointer(checkpoint_path):
@@ -82,7 +79,7 @@ def save_axlearn_checkpoint(model, state, checkpoint_path, mesh):
         inference_runner_state = _InferenceRunnerState(
             # prng_key=TensorSpec(dtype=jnp.uint32, shape=[4], mesh_axes=PartitionSpec(None)),
             # the actual value does not matter since this is just to save the checkpoint in trainer format
-            prng_key=jnp.asarray([ 744862133, 117316191,  744862143, 1173516191], dtype=jnp.uint32),
+            prng_key=jnp.asarray([744862133, 117316191, 744862143, 1173516191], dtype=jnp.uint32),
             model=state,
         )._asdict()
         checkpointer.save(step=22794, state=inference_runner_state)
@@ -98,6 +95,12 @@ def copy_tokenizer_files(src, dst):
         dst_file = os.path.join(dst, file_name)
         shutil.copy(src_file, dst_file)
         print(f"Copied {src_file} to {dst_file}")
+
+
+def jax_to_torch(jax_tensor):
+    """Convert Jax tensor to Torch Tensor."""
+    array = np.array(jax_tensor)
+    return torch.from_numpy(array)
 
 
 def as_jax_tensor(x: Any):
@@ -140,8 +143,7 @@ def as_torch_tensor(x: Any):
     if isinstance(x, torch.Tensor):
         return x
     if isinstance(x, jax.Array):
-        array = np.array(x)
-        return torch.from_numpy(array)
+        return jax_to_torch(x)
     if isinstance(x, (numbers.Number, np.ndarray)):
         return torch.Tensor(x)
     if hasattr(x, "detach"):
@@ -171,8 +173,13 @@ def axlearn_rope_to_transformers_rope(vector: jax.Array) -> jax.Array:
     return vector.reshape(n, h, d)
 
 
+# TODO add HF to Axlearn conversion for TRN checkpoint
+
+
 def parameters_from_llama(llama: LlamaForCausalLM, state: dict, use_gqa=False) -> dict:
     """Converts llama weights from huggingface model to fuji state.
+    Conversion for llama2 and llama3 would be different. For example 7B model does not use GQA,
+    and fuji 7B model also share weights between lm_head and emb.
 
     The following model are supported and tested:
     - (fuji_model_name="fuji-7B-v2", llama_model_name="Llama-2-7b-hf")
@@ -272,7 +279,19 @@ def parameters_from_llama(llama: LlamaForCausalLM, state: dict, use_gqa=False) -
     return as_jax_tensor(state)
 
 
-def parameters_to_llama(state: dict, llama, use_gqa=2) -> dict:
+def parameters_to_llama(state: dict, llama, use_gqa=False, trn_checkpoint=False) -> dict:
+    """Convert parameters from axlearn fuji to transformers llama.
+
+    Note: jax_to_torch on each jax tensor to make sure the tensors are offloaded to CPU,
+    otherwise will run into OOM issue when the model is large
+    """
+    if trn_checkpoint:
+        return _parameters_to_llama_trn(state, llama, use_gqa)
+    else:
+        return _parameters_to_llama(state, llama, use_gqa)
+
+
+def _parameters_to_llama(state: dict, llama, use_gqa=False) -> dict:
     """Convert parameters from axlearn fuji to transformers llama."""
     state = jax.tree.map(lambda x: x, state)
     llama_state = llama.state_dict()
@@ -281,86 +300,208 @@ def parameters_to_llama(state: dict, llama, use_gqa=2) -> dict:
     num_kv_heads = llama.config.num_key_value_heads
 
     if "lm_head" in state["decoder"]:
-        llama_state["lm_head.weight"] = state["decoder"]["lm_head"]["weight"]
+        llama_state["lm_head.weight"] = jax_to_torch(state["decoder"]["lm_head"]["weight"])
     else:
         # if fuji has no lm_head, should share the weights with embed
-        llama_state["lm_head.weight"] = state["decoder"]["emb"]["token_emb"]["weight"]
+        llama_state["lm_head.weight"] = jax_to_torch(state["decoder"]["emb"]["token_emb"]["weight"])
 
-    llama_state["model.embed_tokens.weight"] = state["decoder"]["emb"]["token_emb"]["weight"]
+    llama_state["model.embed_tokens.weight"] = jax_to_torch(
+        state["decoder"]["emb"]["token_emb"]["weight"]
+    )
 
     for idx in range(num_layers):
         # convert linear layers
-        llama_state[f"model.layers.{idx}.mlp.gate_proj.weight"] = state["decoder"]["transformer"][
-            "repeat"
-        ]["layer"]["feed_forward"]["linear1_0"]["weight"][idx].transpose()
-        llama_state[f"model.layers.{idx}.mlp.up_proj.weight"] = state["decoder"]["transformer"][
-            "repeat"
-        ]["layer"]["feed_forward"]["linear1_1"]["weight"][idx].transpose()
-        llama_state[f"model.layers.{idx}.mlp.down_proj.weight"] = state["decoder"]["transformer"][
-            "repeat"
-        ]["layer"]["feed_forward"]["linear2"]["weight"][idx].transpose()
+        llama_state[f"model.layers.{idx}.mlp.gate_proj.weight"] = jax_to_torch(
+            state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["linear1_0"][
+                "weight"
+            ][idx].transpose()
+        )
+        llama_state[f"model.layers.{idx}.mlp.up_proj.weight"] = jax_to_torch(
+            state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["linear1_1"][
+                "weight"
+            ][idx].transpose()
+        )
+        llama_state[f"model.layers.{idx}.mlp.down_proj.weight"] = jax_to_torch(
+            state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["linear2"]["weight"][
+                idx
+            ].transpose()
+        )
 
         # convert attention layers
         if use_gqa:
-            qkv = jnp.permute_dims(
-                state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"]["attention"][
-                    "i_proj"
-                ]["i_proj"]["qkv_proj"]["weight"][idx],
-                (1, 2, 0),
+            qkv = jax_to_torch(
+                jnp.permute_dims(
+                    state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"][
+                        "attention"
+                    ]["i_proj"]["i_proj"]["qkv_proj"]["weight"][idx],
+                    (1, 2, 0),
+                )
             )
             # concat order q, k, v
             llama_state[f"model.layers.{idx}.self_attn.q_proj.weight"] = (
-                axlearn_rope_to_transformers_rope(torch.from_numpy(np.array(qkv[:-2*num_kv_heads]))).reshape(
-                    -1, hidden_size
-                )
+                axlearn_rope_to_transformers_rope(qkv[: -2 * num_kv_heads]).reshape(-1, hidden_size)
             )
             llama_state[f"model.layers.{idx}.self_attn.k_proj.weight"] = (
-                axlearn_rope_to_transformers_rope(torch.from_numpy(np.array(qkv[-2*num_kv_heads:-num_kv_heads]))).reshape(
+                axlearn_rope_to_transformers_rope(qkv[-2 * num_kv_heads : -num_kv_heads]).reshape(
                     -1, hidden_size
                 )
             )
-            llama_state[f"model.layers.{idx}.self_attn.v_proj.weight"] = qkv[-num_kv_heads:].reshape(
-                -1, hidden_size
-            )
+            llama_state[f"model.layers.{idx}.self_attn.v_proj.weight"] = qkv[
+                -num_kv_heads:
+            ].reshape(-1, hidden_size)
         else:
-            qkv = jnp.permute_dims(
-                state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"]["attention"][
-                    "i_proj"
-                ]["i_proj"]["qkv_proj"]["weight"][idx],
-                (0, 2, 3, 1),
+            qkv = jax_to_torch(
+                jnp.permute_dims(
+                    state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"][
+                        "attention"
+                    ]["i_proj"]["i_proj"]["qkv_proj"]["weight"][idx],
+                    (0, 2, 3, 1),
+                )
             )
             # assert jnp.array_equal(as_jax_tensor(llama_state[f"model.layers.{idx}.self_attn.q_proj.weight"]), axlearn_rope_to_transformers_rope(torch.from_numpy(np.array(qkv[0]))).reshape(-1, hidden_size))
             llama_state[f"model.layers.{idx}.self_attn.q_proj.weight"] = (
-                axlearn_rope_to_transformers_rope(torch.from_numpy(np.array(qkv[0]))).reshape(
-                    -1, hidden_size
-                )
+                axlearn_rope_to_transformers_rope(qkv[0]).reshape(-1, hidden_size)
             )
             llama_state[f"model.layers.{idx}.self_attn.k_proj.weight"] = (
-                axlearn_rope_to_transformers_rope(torch.from_numpy(np.array(qkv[1]))).reshape(
-                    -1, hidden_size
-                )
+                axlearn_rope_to_transformers_rope(qkv[1]).reshape(-1, hidden_size)
             )
             llama_state[f"model.layers.{idx}.self_attn.v_proj.weight"] = qkv[2].reshape(
                 -1, hidden_size
             )
 
         # convert attention layer projection
-        llama_state[f"model.layers.{idx}.self_attn.o_proj.weight"] = state["decoder"][
-            "transformer"
-        ]["repeat"]["layer"]["self_attention"]["attention"]["o_proj"]["weight"][idx].reshape(
-            hidden_size, -1
+        llama_state[f"model.layers.{idx}.self_attn.o_proj.weight"] = jax_to_torch(
+            state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"]["attention"][
+                "o_proj"
+            ]["weight"][idx].reshape(hidden_size, -1)
         )
 
         # convert normalization layers
-        llama_state[f"model.layers.{idx}.input_layernorm.weight"] = state["decoder"]["transformer"][
-            "repeat"
-        ]["layer"]["self_attention"]["norm"]["scale"][idx]
-        llama_state[f"model.layers.{idx}.post_attention_layernorm.weight"] = state["decoder"][
-            "transformer"
-        ]["repeat"]["layer"]["feed_forward"]["norm"]["scale"][idx]
+        llama_state[f"model.layers.{idx}.input_layernorm.weight"] = jax_to_torch(
+            state["decoder"]["transformer"]["repeat"]["layer"]["self_attention"]["norm"]["scale"][
+                idx
+            ]
+        )
+        llama_state[f"model.layers.{idx}.post_attention_layernorm.weight"] = jax_to_torch(
+            state["decoder"]["transformer"]["repeat"]["layer"]["feed_forward"]["norm"]["scale"][idx]
+        )
 
     # convert normalization layer
-    llama_state["model.norm.weight"] = state["decoder"]["output_norm"]["scale"]
+    llama_state["model.norm.weight"] = jax_to_torch(state["decoder"]["output_norm"]["scale"])
+
+    return as_torch_tensor(llama_state)
+
+
+def _parameters_to_llama_trn(state: dict, llama, use_gqa=False) -> dict:
+    """TRN has not been able to train the fuji model with the same config as GPU. 2 changes were made:
+    1. replace RepeatTransformerLayer with StackedTransformerLayer
+    2. replace FuseGroupedQKVLinear with GroupedQKVLinear
+    """
+    state = jax.tree.map(lambda x: x, state)
+    llama_state = llama.state_dict()
+    num_layers = llama.config.num_hidden_layers
+    hidden_size = llama.config.hidden_size
+    num_kv_heads = llama.config.num_key_value_heads
+
+    if "lm_head" in state["decoder"]:
+        llama_state["lm_head.weight"] = jax_to_torch(state["decoder"]["lm_head"]["weight"])
+    else:
+        # if fuji has no lm_head, should share the weights with embed
+        llama_state["lm_head.weight"] = jax_to_torch(state["decoder"]["emb"]["token_emb"]["weight"])
+
+    llama_state["model.embed_tokens.weight"] = jax_to_torch(
+        state["decoder"]["emb"]["token_emb"]["weight"]
+    )
+
+    for idx in range(num_layers):
+        # convert linear layers
+        llama_state[f"model.layers.{idx}.mlp.gate_proj.weight"] = jax_to_torch(
+            state["decoder"]["transformer"][f"layer{idx}"]["feed_forward"]["linear1_0"][
+                "weight"
+            ].transpose()
+        )
+        llama_state[f"model.layers.{idx}.mlp.up_proj.weight"] = jax_to_torch(
+            state["decoder"]["transformer"][f"layer{idx}"]["feed_forward"]["linear1_1"][
+                "weight"
+            ].transpose()
+        )
+        llama_state[f"model.layers.{idx}.mlp.down_proj.weight"] = jax_to_torch(
+            state["decoder"]["transformer"][f"layer{idx}"]["feed_forward"]["linear2"][
+                "weight"
+            ].transpose()
+        )
+
+        # import pdb; pdb.set_trace()
+        # convert attention layers
+        # in Apoorv's branch, 70B model uses GroupedQKVLinear and 7B model uses FusedQKVLinear
+        if use_gqa:
+            q = jax_to_torch(
+                jnp.permute_dims(
+                    state["decoder"]["transformer"][f"layer{idx}"]["self_attention"]["attention"][
+                        "i_proj"
+                    ]["i_proj"]["q_proj"]["weight"],
+                    (1, 2, 0),
+                )
+            )
+            k = jax_to_torch(
+                jnp.permute_dims(
+                    state["decoder"]["transformer"][f"layer{idx}"]["self_attention"]["attention"][
+                        "i_proj"
+                    ]["i_proj"]["k_proj"]["weight"],
+                    (1, 2, 0),
+                )
+            )
+            v = jax_to_torch(
+                jnp.permute_dims(
+                    state["decoder"]["transformer"][f"layer{idx}"]["self_attention"]["attention"][
+                        "i_proj"
+                    ]["i_proj"]["v_proj"]["weight"],
+                    (1, 2, 0),
+                )
+            )
+            llama_state[f"model.layers.{idx}.self_attn.q_proj.weight"] = (
+                axlearn_rope_to_transformers_rope(q).reshape(-1, hidden_size)
+            )
+            llama_state[f"model.layers.{idx}.self_attn.k_proj.weight"] = (
+                axlearn_rope_to_transformers_rope(k).reshape(-1, hidden_size)
+            )
+            llama_state[f"model.layers.{idx}.self_attn.v_proj.weight"] = v.reshape(-1, hidden_size)
+        else:
+            qkv = jax_to_torch(
+                jnp.permute_dims(
+                    state["decoder"]["transformer"][f"layer{idx}"]["self_attention"]["attention"][
+                        "i_proj"
+                    ]["i_proj"]["qkv_proj"]["weight"],
+                    (0, 2, 3, 1),
+                )
+            )
+            llama_state[f"model.layers.{idx}.self_attn.q_proj.weight"] = (
+                axlearn_rope_to_transformers_rope(qkv[0]).reshape(-1, hidden_size)
+            )
+            llama_state[f"model.layers.{idx}.self_attn.k_proj.weight"] = (
+                axlearn_rope_to_transformers_rope(qkv[1]).reshape(-1, hidden_size)
+            )
+            llama_state[f"model.layers.{idx}.self_attn.v_proj.weight"] = qkv[2].reshape(
+                -1, hidden_size
+            )
+
+        # convert attention layer projection
+        llama_state[f"model.layers.{idx}.self_attn.o_proj.weight"] = jax_to_torch(
+            state["decoder"]["transformer"][f"layer{idx}"]["self_attention"]["attention"]["o_proj"][
+                "weight"
+            ].reshape(hidden_size, -1)
+        )
+
+        # convert normalization layers
+        llama_state[f"model.layers.{idx}.input_layernorm.weight"] = jax_to_torch(
+            state["decoder"]["transformer"][f"layer{idx}"]["self_attention"]["norm"]["scale"]
+        )
+        llama_state[f"model.layers.{idx}.post_attention_layernorm.weight"] = jax_to_torch(
+            state["decoder"]["transformer"][f"layer{idx}"]["feed_forward"]["norm"]["scale"]
+        )
+
+    # convert normalization layer
+    llama_state["model.norm.weight"] = jax_to_torch(state["decoder"]["output_norm"]["scale"])
 
     return as_torch_tensor(llama_state)
 
@@ -391,13 +532,18 @@ def get_fuji_and_llama(
         # model_config.decoder.set(lm_head=LmHead.default_config())
 
         # initialize fuji model
-        fuji = model_config.instantiate(parent=None)
-        prng_key = jax.random.PRNGKey(0)
-        state = fuji.initialize_parameters_recursively(prng_key=prng_key)
         if load_true_model:
             if fuji_model_path is None:
                 raise Exception("fuji_model_path not provided!")
-            state = load_checkpoint(trainer_config, fuji_model_path)
+            # state = load_checkpoint(trainer_config, fuji_model_path)
+            infer_runner, infer_runner_config = init_infer_runner(trainer_config, fuji_model_path)
+            fuji = infer_runner.model
+            state = infer_runner._inference_runner_state.model
+        else:
+            fuji = model_config.instantiate(parent=None)
+            prng_key = jax.random.PRNGKey(0)
+            # this does not take care of mesh, so will only work with reduced layer numbers
+            state = fuji.initialize_parameters_recursively(prng_key=prng_key)
 
         # initialize llama model
         config = AutoConfig.from_pretrained(
