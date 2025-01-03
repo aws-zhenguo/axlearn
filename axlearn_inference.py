@@ -271,7 +271,7 @@ def assert_top_p_allclose(x, y, atol, rtol, p=0.99):
     print("max top p relative difference", np.max(rdiff))
     print("mean top p relative difference", np.mean(rdiff))
 
-    np.testing.assert_allclose(top_x, top_y, atol=atol, rtol=rtol, equal_nan=False)
+    np.testing.assert_allclose(top_x_flat, top_y_flat, atol=atol, rtol=rtol, equal_nan=False)
 
 
 def assert_top_k_allclose(x, y, atol, rtol, k=64):
@@ -293,20 +293,34 @@ def assert_top_k_allclose(x, y, atol, rtol, k=64):
 
 def assert_top_p_and_top_k_allclose(x, y, atol, rtol, k=64, p=0.99):
     x_indices = np.argsort(x, axis=-1)[:,:,::-1]
+    y_indices = np.argsort(y, axis=-1)[:,:,::-1]
 
     top_x_flat = list()
     top_y_flat = list()
     for i, (x_seq, y_seq) in enumerate(zip(x, y)):
         for j, (x_token, y_token) in enumerate(zip(x_seq, y_seq)):
-            top_indices = list()
-            total = 0.0
-            for idx in x_indices[i][j]:
-                total += x_token[idx]
-                top_indices.append(idx)
+            top_x_indices = list()
+            x_total = 0.0
 
-                if total > p and len(top_indices) >= k:
+            # top p / k in x
+            for idx in x_indices[i][j]:
+                x_total += x_token[idx]
+                top_x_indices.append(idx)
+
+                if x_total > p and len(top_x_indices) >= k:
                     break
 
+            top_y_indices = list()
+            y_total = 0.0
+            # top p / k in y
+            for idx in y_indices[i][j]:
+                y_total += y_token[idx]
+                top_y_indices.append(idx)
+
+                if y_total > p and len(top_y_indices) >= k:
+                    break
+
+            top_indices = list(set(top_x_indices).union(set(top_y_indices)))
             top_x = x_token[top_indices]
             top_y = y_token[top_indices]
 
@@ -323,7 +337,7 @@ def assert_top_p_and_top_k_allclose(x, y, atol, rtol, k=64, p=0.99):
     print("max top p/k relative difference", np.max(rdiff))
     print("mean top p/k relative difference", np.mean(rdiff))
 
-    np.testing.assert_allclose(top_x, top_y, atol=atol, rtol=rtol, equal_nan=False)
+    np.testing.assert_allclose(top_x_flat, top_y_flat, atol=atol, rtol=rtol, equal_nan=False)
 
 
 def validate_conversion(fuji_model_name, llama_model_name, load_true_model=False, reverse=False):
