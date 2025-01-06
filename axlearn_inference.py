@@ -1,12 +1,13 @@
+from collections import defaultdict
+
 import jax
 import numpy as np
 import seqio
 import tensorflow as tf
 import torch
+from jax import numpy as jnp
 from transformers import AutoConfig, LlamaForCausalLM
 
-from collections import defaultdict
-from jax import numpy as jnp
 from axlearn.common import config, evaler, input_tf_data, measurement, utils
 from axlearn.common.checkpointer import Checkpointer
 from axlearn.common.config import config_for_function
@@ -21,45 +22,21 @@ from axlearn.experiments.text.common import vocab
 from axlearn.experiments.text.gpt import c4_trainer
 from axlearn.vision import image_classification, input_image, resnet
 from utils import (
-    seed,
+    copy_files,
     get_fuji_and_llama,
-    load_checkpoint,
     get_mesh,
+    init_infer_runner,
+    load_checkpoint,
     parameters_from_llama,
     parameters_to_llama,
     save_axlearn_checkpoint,
     save_transformers_checkpoint,
-    copy_tokenizer_files,
-    init_infer_runner,
+    seed,
 )
 
-# config_name = "fuji-1B-v3"
-# config_name = "fuji-7B-v2"
-# config_name = "fuji-70B-v2"
-
-# Note: step folder need to be included for inference runner but not for checkpointer
-# to specify step folder for checkpointer, use the step parameter
-# if config_name == "fuji-1B-v3":
-    # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/test_01/11132/axlearn_out/checkpoints"
-    # TRN_CHECKPOINT = False
-    # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/test_01/11130/axlearn_out/checkpoints"
-#     sentencepiece_model_name = "bpe_128k_c4.model"
-# elif config_name == "fuji-7B-v2":
-#     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000"
-#     # TRN_CHECKPOINT = False
-#     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints"
-#     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/fuji-7B-v2/step_00022794"
-#     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/round_trip/step_00022794"
-#     sentencepiece_model_name = "bpe_32k_c4.model"
-#     converted_tokenizer_path = "ConvertedTokenizer"
-# else:
-#     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/trn_baselines/611/axlearn_out/checkpoints/step_00010000"
-#     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10985/axlearn_out/checkpoints/step_00035000"
-#     # CHECKPOINT_PATH = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/241230232345/axlearn_out/checkpoints/step_00000002"
-#     # TRN_CHECKPOINT = True
-#     sentencepiece_model_name = "bpe_32k_c4.model"
-#     converted_tokenizer_path = "ConvertedTokenizer"
 sentencepiece_model_name = "bpe_32k_c4.model"
+use_transformers = False
+
 
 def get_trainer_config(config_name):
     trainer_config_fn = get_named_trainer_config(
@@ -68,7 +45,6 @@ def get_trainer_config(config_name):
     # TODO trainer_config connot be removed for now since mesh is needed to save checkpoint
     trainer_config = trainer_config_fn()
     return trainer_config
-use_transformers = False
 
 
 def get_transformers_tokenizer():
@@ -168,7 +144,11 @@ def run_inference(texts, config_name, checkpoint_path):
             output_texts = sentence_piece_vocab.tokenizer.decode_ids(output_ids.tolist())
             # sentence_piece_vocab.tokenizer.pad_id()  # 0
             # sentence_piece_vocab.tokenizer.eos_id()  # 1
+            # sentence_piece_vocab.tokenizer.unk_id()  # 2
             # sentence_piece_vocab.tokenizer.bos_id()  # -1
+            # sentence_piece_vocab.tokenizer.id_to_piece(0) <pad>
+            # sentence_piece_vocab.tokenizer.id_to_piece(1) </s>
+            # sentence_piece_vocab.tokenizer.id_to_piece(2) <unk>
 
             results.extend(output_texts)
             print(output_texts)
@@ -246,8 +226,6 @@ def validate_conversion(
 
     fuji_logits = np.asarray(aux["logits"])
     llama_logits = output.logits.numpy()
-    # rdiff = relative_difference(fuji_logits, llama_logits)
-    # jaccard_indices = average_top_k_jaccard_similarity(fuji_logits, llama_logits)
     assert isinstance(aux["logits"].dtype, np.dtypes.Float32DType)
 
     # TODO should not do the softmax myself
@@ -287,16 +265,14 @@ def convert_and_save_checkpoint(
             f"/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/{save_name}"
         )
         save_transformers_checkpoint(llama, checkpoint_path)
-        # Seems spm and transformers tokenizers are not matching
-        # copy_tokenizer_files(converted_tokenizer_path, checkpoint_path)
-        # Remember to copy the generation_config.json to checkpoint folder to get similar results
+        copy_files(llama_model_name, checkpoint_path)
     else:
         state = parameters_from_llama(llama, state, use_gqa=use_gqa, trn_checkpoint=trn_checkpoint)
         checkpoint_path = (
             f"/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/{save_name}"
         )
 
-        trainer_config = get_trainer_config[fuji_model_name]
+        trainer_config = get_trainer_config(fuji_model_name)
         save_axlearn_checkpoint(fuji, state, checkpoint_path, get_mesh(trainer_config))
 
     print(f"Successfuly save checkpoint to {checkpoint_path}.")
@@ -321,9 +297,6 @@ def get_fuji_with_llama_weights(config_name):
 
 
 def generate(texts, config_name, checkpoint_path):
-    # TODO init model and load checkpoint without InferenceRunner
-    # model = infer_runner.model
-    # model_state = infer_runner._inference_runner_state.model
     results = list()
     batch_size, max_len = 8, 4096
     trainer_config = get_trainer_config(config_name)
@@ -333,9 +306,6 @@ def generate(texts, config_name, checkpoint_path):
         # model, model_state = get_fuji_with_llama_weights(config_name)
         model_config = trainer_config.model
         model_config.set(name="model")
-        # TODO remove the following two lines
-        # model_config.decoder.set(lm_head=LmHead.default_config())
-        # model_config.decoder.set(vocab_size=32000)
 
         model = model_config.instantiate(parent=None)
         model_state = load_checkpoint(trainer_config, checkpoint_path)
@@ -356,9 +326,6 @@ def generate(texts, config_name, checkpoint_path):
     else:
         model_config = trainer_config.model
         model_config.set(name="model")
-        # TODO remove the following two lines
-        # model_config.decoder.set(lm_head=LmHead.default_config())
-        # model_config.decoder.set(lm_head=None)
 
         model = model_config.instantiate(parent=None)
         model_state = load_checkpoint(trainer_config, checkpoint_path)
@@ -371,7 +338,6 @@ def generate(texts, config_name, checkpoint_path):
         stop_decoding_condition = StopOnSubsequence([[model.decoder.config.eos_token_id]])
 
         input_ids = tokenizer.encode(texts)
-        # TODO the inference for fuji model seem to be broken
 
         # add padding
         def pad_list(l, max_len, fill_value=tokenizer.pad_id):
@@ -384,7 +350,6 @@ def generate(texts, config_name, checkpoint_path):
     method = "sample_decode"
     # method="beam_search_decode"
 
-    # TODO decoder batch mode
     for input_id in input_ids:
         # follow decoder input format https://github.com/apple/axlearn/blob/a15a3bcbb976c14db157a8958df368a48c614c1f/axlearn/common/decoder_test.py#L569
         input_batch = {
@@ -397,7 +362,6 @@ def generate(texts, config_name, checkpoint_path):
             input_batch["stop_decoding_condition"] = stop_decoding_condition
         # TODO add mask for batch running https://github.com/apple/axlearn/blob/a15a3bcbb976c14db157a8958df368a48c614c1f/axlearn/common/decoder_test.py#L563C13-L563C24
 
-        # TODO how to get model states with invocation context without using infer_runner? https://github.com/apple/axlearn/blob/a15a3bcbb976c14db157a8958df368a48c614c1f/axlearn/experiments/text/gpt/param_converter_test.py#L105
         # TODO the decoding process does not seem to start from the last token, but start from the first token when testing with axlearn model
         output, _ = functional(
             model,
@@ -439,7 +403,7 @@ if __name__ == "__main__":
     # run_inference(texts, config_name, checkpoint_path)
     # generate(texts, config_name, checkpoint_path)
 
-    # Llama to Axlearn 7B GPU true model 
+    # Llama to Axlearn 7B GPU true model
     # validate_conversion(
     #     "fuji-7B-v2",
     #     "Llama-2-7b-hf",
@@ -494,33 +458,34 @@ if __name__ == "__main__":
     # )
 
     # Llama to Axlearn 7B TRN dummy model
-    validate_conversion(
-        "fuji-70B-v2",
-        "Llama-2-70b-hf",
-        load_true_model=False,
-        texts=texts,
-        trn_checkpoint=True,
-        use_gqa=True,
-    )
-
-    # Axlearn to Llama 70B TRN true model
     # validate_conversion(
     #     "fuji-70B-v2",
     #     "Llama-2-70b-hf",
-    #     load_true_model=True,
-    #     reverse=True,
+    #     load_true_model=False,
     #     texts=texts,
-    #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/241230232345/axlearn_out/checkpoints/step_00000002",
     #     trn_checkpoint=True,
     #     use_gqa=True,
     # )
+
+    # Axlearn to Llama 70B TRN true model
+    validate_conversion(
+        "fuji-70B-v2",
+        "Llama-2-70b-hf",
+        load_true_model=True,
+        reverse=True,
+        texts=texts,
+        fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/241230232345/axlearn_out/checkpoints/step_00000002",
+        trn_checkpoint=True,
+        use_gqa=True,
+    )
 
     # convert_and_save_checkpoint(
     #     "fuji-7B-v2",
     #     "Llama-2-7b-hf",
     #     load_true_model=True,
     #     reverse=False,
-    #     trn_checkpoint=False,
+    #     save_name="Llama-2-7b-trn",
+    #     trn_checkpoint=True,
     #     use_gqa=False,
     # )
     # convert_and_save_checkpoint(

@@ -70,7 +70,6 @@ class Version(enum.Enum):
 VOCAB_SIZE = {
     Version.V1: 32 * 1024,
     Version.V2: 32 * 1024,
-    # Version.V2: 32000,
     Version.V3: 128256,
 }
 
@@ -198,7 +197,6 @@ def get_trainer_kwargs(
             mesh_shape=mesh_shape_from_axes(data=-1, fsdp=8),
         )
     elif model_size == "7B":
-        # Llama3 and Llama2 70B uses GQA, but Llama2 7B does not
         trainer_kwargs = dict(
             model_kwargs=dict(
                 num_layers=32,
@@ -298,7 +296,7 @@ def get_trainer_kwargs(
     elif model_size == "8B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=8,
+                num_layers=32,
                 hidden_dim=128 * 32,
                 num_heads=32,
                 num_kv_heads=num_kv_heads,
@@ -378,7 +376,7 @@ def get_trainer_kwargs(
     elif model_size == "70B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=8,
+                num_layers=80,
                 hidden_dim=128 * 64,
                 num_heads=64,
                 # No GQA support in V1 models, so num_kv_heads is the same as num_heads.
@@ -430,7 +428,7 @@ def get_trainer_kwargs(
     model_kwargs = trainer_kwargs.pop("model_kwargs")
     model_kwargs.setdefault("vocab_size", vocab_size)
     # https://github.com/apple/axlearn/compare/main...ptoulme-aws:axlearn:accuracy_workstream_trn#diff-bdb7d46e038855126e7c2f257e2c9db7ed2cb38ca1bdfc4f07168522dd45020eR461
-    # model_kwargs.setdefault("stack_cfg", StackedTransformerLayer.default_config())
+    model_kwargs.setdefault("stack_cfg", StackedTransformerLayer.default_config())
     trainer_kwargs["model_cfg"] = model_config(**model_kwargs)
     trainer_kwargs["learner_cfg"] = adamw_decoupled_learner_config(
         max_step=trainer_kwargs["max_step"],
@@ -481,9 +479,9 @@ def model_config(
         ffn_dim = scaled_hidden_dim(scale=8 / 3, round_up_to_multiples_of=256)
     if num_kv_heads:
         atten_cfg = GroupedQueryAttention.default_config()
-        atten_input_linear = FusedGroupedQKVLinear.default_config().set(num_kv_heads=num_kv_heads)
+        # atten_input_linear = FusedGroupedQKVLinear.default_config().set(num_kv_heads=num_kv_heads)
         # https://github.com/apple/axlearn/compare/main...ptoulme-aws:axlearn:accuracy_workstream_trn#diff-bdb7d46e038855126e7c2f257e2c9db7ed2cb38ca1bdfc4f07168522dd45020eR514
-        # atten_input_linear = GroupedQKVLinear.default_config().set(num_kv_heads=num_kv_heads)
+        atten_input_linear = GroupedQKVLinear.default_config().set(num_kv_heads=num_kv_heads)
     else:
         atten_cfg = MultiheadAttention.default_config()
         atten_input_linear = FusedQKVLinear.default_config()
@@ -528,7 +526,6 @@ def trainer_configs(
     for version, model_size, flash_attention in itertools.product(
         Version, MODEL_SIZES, [True, False]
     ):
-        # build config for different combination of settings
         vocab_size = VOCAB_SIZE[version]
         config_name = make_config_name(
             arch=arch,

@@ -808,7 +808,6 @@ class Module(Configurable, metaclass=_PostInitMeta):
                 f"child_config already has a different name: {child_config.name} vs. {name}"
             )
         child_config.name = name
-        # instantiate a evaler
         module = child_config.instantiate(parent=self, **kwargs)
         if name in self._children:
             raise ChildNameConflictError(f"Child {name} already exists")
