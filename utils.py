@@ -1,5 +1,6 @@
-import os
 import numbers
+import os
+import shutil
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from typing import Any, Callable, NamedTuple, Optional, TypeVar, Union
@@ -9,14 +10,13 @@ import numpy as np
 import torch
 from jax import numpy as jnp
 from transformers import AutoConfig, LlamaForCausalLM
-from axlearn.common import config, evaler, input_tf_data, measurement, utils
 
+from axlearn.common import config, evaler, input_tf_data, measurement, utils
 from axlearn.common.checkpointer import Checkpointer, CheckpointValidationType
 from axlearn.common.decoder import LmHead
-from axlearn.experiments.text.gpt import c4_trainer
 from axlearn.common.inference import InferenceRunner, _InferenceRunnerState
 from axlearn.common.utils import PartitionSpec, TensorSpec
-
+from axlearn.experiments.text.gpt import c4_trainer
 
 seed = 123
 
@@ -60,17 +60,17 @@ def load_checkpoint(trainer_config, checkpoint_path, step=None):
       - gda
           - decoder
     to keep them consitent, wrap model state in a _InferenceRunnerState
+
+    To load a model only checkpoint folder, can do the following
+
+    checkpointer = get_checkpointer(checkpoint_path)
+    prng_key = jax.random.PRNGKey(seed)
+    state = model.initialize_parameters_recursively(prng_key=prng_key)
+    step, state = checkpointer.restore(state=state, step=step)
     """
-    # checkpointer = get_checkpointer(checkpoint_path)
     inference_runner, _ = init_infer_runner(trainer_config, checkpoint_path)
     model_state = inference_runner._inference_runner_state.model
     return model_state
-
-    # prng_key = jax.random.PRNGKey(seed)
-    # state = model.initialize_parameters_recursively(prng_key=prng_key)
-    # step, state = checkpointer.restore(state=state, step=step)
-
-    # return state
 
 
 def save_axlearn_checkpoint(model, state, checkpoint_path, mesh):
@@ -89,12 +89,16 @@ def save_transformers_checkpoint(model, checkpoint_path):
     model.save_pretrained(checkpoint_path)
 
 
-def copy_tokenizer_files(src, dst):
-    for file_name in os.listdir():
-        src_file = os.path.join(src, file_name)
-        dst_file = os.path.join(dst, file_name)
-        shutil.copy(src_file, dst_file)
-        print(f"Copied {src_file} to {dst_file}")
+def copy_files(llama_model_name, checkpoint_path):
+    # Copy the BPE tokenizer so that vLLM can use Mistral tokenizers to load it
+    shutil.copyfile(
+        "axlearn/data/tokenizers/sentencepiece/bpe_32k_c4.model",
+        os.path.join(checkpoint_path, "bpe_32k_c4.model.v1"),
+    )
+    shutil.copyfile(
+        os.path.join(llama_model_name, "generation_config.json"),
+        os.path.join(checkpoint_path, "generation_config.json"),
+    )
 
 
 def jax_to_torch(jax_tensor):
@@ -327,17 +331,23 @@ def _parameters_from_llama_trn(llama: LlamaForCausalLM, state: dict, use_gqa=Fal
                 "i_proj"
             ]["q_proj"]["weight"] = transformers_rope_to_axlearn_rope(
                 layer.self_attn.q_proj.weight.reshape(-1, i_shape[-1], i_shape[-3])
-            ).permute(2, 0, 1)
+            ).permute(
+                2, 0, 1
+            )
             state["decoder"]["transformer"][f"layer{idx}"]["self_attention"]["attention"]["i_proj"][
                 "i_proj"
             ]["k_proj"]["weight"] = transformers_rope_to_axlearn_rope(
                 layer.self_attn.k_proj.weight.reshape(-1, i_shape[-1], i_shape[-3])
-            ).permute(2, 0, 1)
+            ).permute(
+                2, 0, 1
+            )
             state["decoder"]["transformer"][f"layer{idx}"]["self_attention"]["attention"]["i_proj"][
                 "i_proj"
             ]["v_proj"]["weight"] = layer.self_attn.v_proj.weight.reshape(
                 -1, i_shape[-1], i_shape[-3]
-            ).permute(2, 0, 1)
+            ).permute(
+                2, 0, 1
+            )
         else:
             i_shape = state["decoder"]["transformer"]["layer0"]["self_attention"]["attention"][
                 "i_proj"
@@ -622,14 +632,11 @@ def get_fuji_and_llama(
     model_config.set(name="model")
 
     if reverse:
-        # TODO remove the line below
-        # model_config.decoder.set(lm_head=LmHead.default_config())
-
         # initialize fuji model
         if load_true_model:
             if fuji_model_path is None:
                 raise Exception("fuji_model_path not provided!")
-            # state = load_checkpoint(trainer_config, fuji_model_path)
+
             infer_runner, infer_runner_config = init_infer_runner(trainer_config, fuji_model_path)
             fuji = infer_runner.model
             state = infer_runner._inference_runner_state.model
@@ -649,11 +656,9 @@ def get_fuji_and_llama(
         config.eos_token_id = model_config.decoder.eos_token_id
         config.bos_token_id = -1
         llama = LlamaForCausalLM._from_config(config)
-        # llama = llama.eval()
     else:
         # initialize transformer model
         if load_true_model:
-            # load model to a different device to avoid OOM
             llama = LlamaForCausalLM.from_pretrained(llama_model_name, local_files_only=True)
         else:
             # self-specify smaller config for easier validation
@@ -672,16 +677,13 @@ def get_fuji_and_llama(
         if fuji_model_name == "fuji-7B-v2":
             # llama2 7B does not share lm_head with embedding, but fuji does
             # need to disable lm_head sharing for fuji to match llama
-            # model_config.decoder.set(lm_head=None)
-            # model_config.decoder.set(lm_head=LmHead.default_config())
-            pass
+            model_config.decoder.set(lm_head=LmHead.default_config())
 
         # initialize fuji model
         fuji = model_config.instantiate(parent=None)
         prng_key = jax.random.PRNGKey(0)
         state = fuji.initialize_parameters_recursively(prng_key=prng_key)
 
-    # TODO can we assign and get state from fuji model so that only return models
     return fuji, state, llama
 
 

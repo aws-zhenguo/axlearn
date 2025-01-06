@@ -674,7 +674,6 @@ def get_trainer_config_fn(
     """
 
     def config_fn() -> InstantiableConfig:
-        # save_input_iterator comes from default spmdtrainer
         cfg: SpmdTrainer.Config = SpmdTrainer.default_config()
         cfg.name = "gpt_trainer"
         cfg.model = model_cfg
