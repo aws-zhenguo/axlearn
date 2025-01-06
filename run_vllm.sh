@@ -1,16 +1,15 @@
 #!/bin/bash
 # start vllm server with bash ./start_server.sh /opt/dlami/nvme/czhenguo/llm_eval/Meta-Llama-3.1-70B-Instruct/ 22794 4 2048 32 8 8
 model_id=${1}
-tokenizer=${2}
-port=${3:-8000}
-cores=${4:-8}
-max_seq_len=${5:-2048}
-cont_batch_size=${6:-32}
-tp_size=${7:-8}
-n_threads=${8:-8}
+port=${2:-8000}
+cores=${3:-8}
+max_seq_len=${4:-2048}
+cont_batch_size=${5:-32}
+tp_size=${6:-8}
+n_threads=${7:-8}
 
 # Shift positional arguments out of the way before parsing named arguments
-shift 8
+shift 7
 
 # Parse named arguments
 while [[ "$#" -gt 0 ]]; do
@@ -23,7 +22,6 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 echo "Starting VLLM Server for model: ${model_id}"
-echo "Using tokenizer: ${tokenizer}"
 
 export vLLM_MAX_LEN=${max_seq_len} #sequence length
 export vLLM_MODEL_ID=${model_id}
@@ -36,15 +34,12 @@ export OMP_NUM_THREADS=${n_threads}
 # Build base command arguments
 cmd_args=(
     --model "${model_id}"
-    # --tokenizer "/fsx/czhenguo/Projects/fruitstand/axlearn/axlearn/data/tokenizers/sentencepiece/bpe_32k_c4.model.v1"
-    --tokenizer "${tokenizer}"
     --tensor-parallel-size "${tp_size}"
     --max-num-seqs "${cont_batch_size}"
     --max-model-len "${max_seq_len}"
     --port "${port}"
     --device "cuda"
     --trust-remote-code 
-    --tokenizer-mode "mistral"
 )
 
 # Conditionally set the environment variable and add the fixed argument if --quantization is provided

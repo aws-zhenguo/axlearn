@@ -89,12 +89,34 @@ def save_transformers_checkpoint(model, checkpoint_path):
     model.save_pretrained(checkpoint_path)
 
 
-def copy_files(llama_model_name, checkpoint_path):
-    # Copy the BPE tokenizer so that vLLM can use Mistral tokenizers to load it
-    shutil.copyfile(
-        "axlearn/data/tokenizers/sentencepiece/bpe_32k_c4.model",
-        os.path.join(checkpoint_path, "bpe_32k_c4.model.v1"),
+converted_tokenizer_path = "fuji_tokenizer"
+
+
+def convert_tokenizer(
+    sentencepiece_model_path="axlearn/data/tokenizers/sentencepiece/bpe_32k_c4.model",
+):
+    if os.path.isdir(converted_tokenizer_path):
+        return
+
+    tokenizer = LlamaTokenizer.from_pretrained(
+        sentencepiece_tokenizer_path,
+        bos_token="</s>",
+        eos_token="</s>",
+        pad_token="<pad>",
+        unk_token="<unk>",
+        use_fast=False,
+        add_bos_token=True,
     )
+    tokenizer.save_pretrained(converted_tokenizer_path)
+
+
+def copy_files(llama_model_name, checkpoint_path):
+    for file_name in os.listdir(converted_tokenizer_path):
+        shutil.copyfile(
+            os.path.join(converted_tokenizer_path, file_name),
+            os.path.join(checkpoint_path, file_name),
+        )
+
     shutil.copyfile(
         os.path.join(llama_model_name, "generation_config.json"),
         os.path.join(checkpoint_path, "generation_config.json"),

@@ -1,10 +1,10 @@
 import sentencepiece as spm
-from transformers import PreTrainedTokenizerFast, PreTrainedTokenizer, AutoTokenizer
+from transformers import PreTrainedTokenizerFast, PreTrainedTokenizer, AutoTokenizer, LlamaTokenizer
 from mistral_common.tokens.tokenizers.sentencepiece import SentencePieceTokenizer
 
-# sentencepiece_tokenizer_path = "/fsx/czhenguo/Projects/fruitstand/axlearn/axlearn/data/tokenizers/sentencepiece/bpe_32k_c4.model"
-# sentencepiece_tokenizer_path = "/fsx/czhenguo/Projects/fruitstand/axlearn/axlearn/data/tokenizers/sentencepiece/bpe_32k_c4.v2model"
-sentencepiece_tokenizer_path = "/fsx/czhenguo/Projects/fruitstand/axlearn/axlearn/data/tokenizers/sentencepiece/bpe_32k_c4.v1model"
+sentencepiece_tokenizer_path = "/fsx/czhenguo/Projects/fruitstand/axlearn/axlearn/data/tokenizers/sentencepiece/bpe_32k_c4.model"
+# sentencepiece_tokenizer_path = "/fsx/czhenguo/Projects/fruitstand/axlearn/axlearn/data/tokenizers/sentencepiece/bpe_32k_c4.v1model"
+
 
 def convert_tokenizer_transformers_4_47_1():
     from transformers.convert_slow_tokenizer import SpmConverter
@@ -13,41 +13,84 @@ def convert_tokenizer_transformers_4_47_1():
     spm_tokenizer.vocab_file = sentencepiece_tokenizer_path
     spm_converter = SpmConverter(spm_tokenizer)
     converted = spm_converter.converted()
-    converted.save('converted.json')
-    print(converted.encode("How are you doing?").tokens)
-    import pdb; pdb.set_trace()
+    converted.save("converted.json")
 
-    tok = PreTrainedTokenizer(tokenizer_object=converted, use_fast=False, clean_up_tokenization_spaces=False, pad_token='<pad>', unk_token='<unk>', bos_token='<s>', eos_token='</s>', model_max_length=1024, padding_side='right', truncation_side='right')
-    tok.save_pretrained('ConvertedTokenizer')
+    tok = PreTrainedTokenizer(
+        tokenizer_object=converted,
+        use_fast=False,
+        clean_up_tokenization_spaces=False,
+        pad_token="<pad>",
+        unk_token="<unk>",
+        bos_token="<s>",
+        eos_token="</s>",
+        model_max_length=1024,
+        padding_side="right",
+        truncation_side="right",
+    )
+    tok.save_pretrained("ConvertedTokenizer")
+
 
 def convert_tokenizer_transformers_4_43_2():
     from transformers import convert_slow_tokenizer
 
     spm_tokenizer = spm.SentencePieceProcessor(model_file=sentencepiece_tokenizer_path)
     spm_tokenizer.vocab_file = sentencepiece_tokenizer_path
-    spm_tokenizer.vocab_file = tokenizer_path
     spm_converter = convert_slow_tokenizer.SpmConverter(spm_tokenizer)
-    # import pdb; pdb.set_trace()
     converted = spm_converter.converted()
-    converted.save('converted.json')
-    
-    tok = PreTrainedTokenizerFast.from_pretrained(pretrained_model_name_or_path='converted.json', clean_up_tokenization_spaces=True, pad_token='<pad>', unk_token='<unk>', bos_token='<s>', eos_token='</s>', model_max_length=1024, padding_side='right', truncation_side='right')
-    tok.save_pretrained('ConvertedTokenizer')
+    converted.save("converted.json")
 
-def run_tokenizer(texts):
-    tokenizer = AutoTokenizer.from_pretrained('ConvertedTokenizer', use_fast=False)
+    tok = PreTrainedTokenizerFast.from_pretrained(
+        pretrained_model_name_or_path="converted.json",
+        clean_up_tokenization_spaces=True,
+        pad_token="<pad>",
+        unk_token="<unk>",
+        bos_token="<s>",
+        eos_token="</s>",
+        model_max_length=1024,
+        padding_side="right",
+        truncation_side="right",
+    )
+    tok.save_pretrained("ConvertedTokenizer")
+
+
+def convert_llama_tokenizer():
+    # config the param according to https://github.com/huggingface/transformers/blob/b2f2977533445c4f62bf58e10b1360e6856e78ce/src/transformers/models/llama/tokenization_llama.py#L54
+    # also get the bos eos pad unk tokens by running seqio tokenizer
+    tokenizer = LlamaTokenizer.from_pretrained(
+        sentencepiece_tokenizer_path,
+        bos_token="</s>",
+        eos_token="</s>",
+        pad_token="<pad>",
+        unk_token="<unk>",
+        use_fast=False,
+        add_bos_token=True,
+    )
+    tokenizer.save_pretrained("fuji_tokenizer")
+
+
+def run_converted_tokenizer():
+    tokenizer = AutoTokenizer.from_pretrained("fuji_tokenizer")
     for text in texts:
         print(tokenizer.tokenize(text))
         print(tokenizer.encode(text))
     return tokenizer.batch_encode_plus(texts)
 
+
+def run_tokenizer(texts):
+    tokenizer = AutoTokenizer.from_pretrained("Llama-2-7b-hf", use_fast=False)
+    for text in texts:
+        print(tokenizer.tokenize(text))
+        print(tokenizer.encode(text))
+    return tokenizer.batch_encode_plus(texts)
+
+
 def run_sentence_piece_tokenizer(texts):
     tokenizer_path = sentencepiece_tokenizer_path
     spm_tokenizer = spm.SentencePieceProcessor(model_file=tokenizer_path)
 
-    import pdb; pdb.set_trace()
     token_ids = spm_tokenizer.encode(texts)
     return token_ids
+
 
 def run_seqio_tokenizer(texts):
     from axlearn.experiments.text.common import vocab
@@ -60,6 +103,7 @@ def run_seqio_tokenizer(texts):
     tokenizer = vocab_cfg.instantiate()
     token_ids = tokenizer.encode(texts)
     return token_ids
+
 
 def run_c4_tokenizer(texts):
     from axlearn.experiments.text.common import vocab
@@ -75,20 +119,17 @@ def run_c4_tokenizer(texts):
     token_ids = tokenizer.encode(texts)
     return token_ids
 
+
 def run_mistral_tokenizer(texts):
     tokenizer_path = sentencepiece_tokenizer_path
     tokenizer = SentencePieceTokenizer(model_path=tokenizer_path)
     for text in texts:
         token_ids = tokenizer.encode(text, bos=True, eos=False)
         print(token_ids)
-    import pdb; pdb.set_trace()
     return token_ids
 
+
 if __name__ == "__main__":
-    # convert_tokenizer()
-    # import tokenizers
-    # tok = tokenizers.SentencePieceTokenizer(sentencepiece_tokenizer_path)
-    # convert_tokenizer_transformers_4_47_1()
     texts = [
         "How are you doing?",
         "who is the president of the US now?",
@@ -99,6 +140,8 @@ if __name__ == "__main__":
     ]
     # print(run_tokenizer(texts))
     # print(run_sentence_piece_tokenizer(texts))
-    print(run_mistral_tokenizer(texts))
+    # print(run_mistral_tokenizer(texts))
     # print(run_seqio_tokenizer(texts))
     # compare_tokenizers()
+    convert_llama_tokenizer()
+    run_converted_tokenizer()

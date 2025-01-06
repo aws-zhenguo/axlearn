@@ -144,7 +144,11 @@ def run_inference(texts, config_name, checkpoint_path):
             output_texts = sentence_piece_vocab.tokenizer.decode_ids(output_ids.tolist())
             # sentence_piece_vocab.tokenizer.pad_id()  # 0
             # sentence_piece_vocab.tokenizer.eos_id()  # 1
+            # sentence_piece_vocab.tokenizer.unk_id()  # 2
             # sentence_piece_vocab.tokenizer.bos_id()  # -1
+            # sentence_piece_vocab.tokenizer.id_to_piece(0) <pad>
+            # sentence_piece_vocab.tokenizer.id_to_piece(1) </s>
+            # sentence_piece_vocab.tokenizer.id_to_piece(2) <unk>
 
             results.extend(output_texts)
             print(output_texts)
