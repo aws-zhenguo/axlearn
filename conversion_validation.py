@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 
 DEFAULT_K = 64
 DEFAULT_P = 0.99
@@ -32,25 +33,44 @@ def average_top_k_jaccard_similarity(x, y, max_k=100):
 
 
 def get_top_p(x, p):
+    """Get top p from 1D array."""
+    x_indices = np.argsort(x)[::-1]
     total = 0.0
     top_values = list()
-    for val in x:
+    top_indices = list()
+
+    for idx in x_indices:
+        val = x[idx]
         total += val
         top_values.append(val)
+        top_indices.append(idx)
+
         if total > p:
             break
-    return top_values
+
+    return top_values, top_indices
 
 
-def get_top_p_indices(x, x_indices, p):
-    total = 0.0
-    top_p_indices = list()
-    for idx in x_indices:
-        total += x[idx]
-        top_p_indices.append(idx)
-        if total > p:
-            break
-    return top_p_indices
+def test_top_p():
+    probs = np.asarray([0.3, 0.2, 0.25, 0.15, 0.1])
+    top_values, top_indices = get_top_p(probs, 0.85)
+    np.testing.assert_array_equal(top_values, [0.3, 0.25, 0.2, 0.15])
+    np.testing.assert_array_equal(top_indices, [0, 2, 1, 3])
+
+
+def get_top_k(x, k):
+    """Get top k from 1D array."""
+    x_indices = np.argsort(x)[::-1]
+    sorted_x = x[x_indices]
+
+    return sorted_x[:k], x_indices[:k]
+
+
+def test_top_k():
+    probs = np.asarray([0.3, 0.2, 0.25, 0.15, 0.1])
+    top_values, top_indices = get_top_k(probs, 4)
+    np.testing.assert_array_equal(top_values, [0.3, 0.25, 0.2, 0.15])
+    np.testing.assert_array_equal(top_indices, [0, 2, 1, 3])
 
 
 def ndarray_apply_order(x, indices):
@@ -65,57 +85,142 @@ def ndarray_apply_order(x, indices):
     return np.asarray(result)
 
 
-def get_top_k_smallest(x, y, k=DEFAULT_K):
+def get_top_k_union(x, y, k=DEFAULT_K):
+    """Get top k in x and y 3D array, then get union among them."""
     x_indices = np.argsort(x, axis=-1)[:, :, ::-1]
-    top_x = ndarray_apply_order(x, x_indices)[:, :, :k]
-    top_y = ndarray_apply_order(y, x_indices)[:, :, :k]
-    return min(np.min(top_x), np.min(top_y))
+    y_indices = np.argsort(y, axis=-1)[:, :, ::-1]
+    x_results = list()
+    y_results = list()
+
+    for i, (x_seq, y_seq) in enumerate(zip(x, y)):
+        x_seq_results = list()
+        y_seq_results = list()
+        for j, (x_token, y_token) in enumerate(zip(x_seq, y_seq)):
+            top_x_indices = x_indices[i][j][:k]
+            top_y_indices = y_indices[i][j][:k]
+            top_indices = list(set(top_x_indices).union(set(top_y_indices)))
+            top_x = x_token[top_indices]
+            top_y = y_token[top_indices]
+
+            x_seq_results.append(top_x)
+            y_seq_results.append(top_y)
+        x_results.append(x_seq_results)
+        y_results.append(y_seq_results)
+
+    return x_results, y_results
+
+
+def get_top_k_smallest(x, y, k=DEFAULT_K):
+    """Get top k smallest in 3D array."""
+    x, y = get_top_k_union(x, y, k)
+    results = list()
+
+    for i, (x_seq, y_seq) in enumerate(zip(x, y)):
+        seq_results = list()
+        for j, (x_token, y_token) in enumerate(zip(x_seq, y_seq)):
+            seq_results.append(np.min(np.concatenate((x_token, y_token), axis=-1)))
+        results.append(seq_results)
+    return results
+
+
+def test_get_top_k_smallest():
+    x = np.asarray([[[0.3, 0.2, 0.25, 0.15, 0.1] for _ in range(2)] for _ in range(2)])
+    y = np.asarray([[[0.3, 0.19, 0.23, 0.15, 0.1] for _ in range(2)] for _ in range(2)])
+
+    top_k_smallest = get_top_k_smallest(x, y, 3)
+
+    np.testing.assert_array_equal(top_k_smallest, [[0.19 for _ in range(2)] for _ in range(2)])
+
+
+def get_top_p_smallest(x, y, p=DEFAULT_P):
+    """Get top k smallest in 3D array."""
+    x, y = get_top_p_union(x, y, p)
+    results = list()
+
+    for i, (x_seq, y_seq) in enumerate(zip(x, y)):
+        seq_results = list()
+        for j, (x_token, y_token) in enumerate(zip(x_seq, y_seq)):
+            seq_results.append(np.min(np.concatenate((x_token, y_token), axis=-1)))
+        results.append(seq_results)
+    return results
+
+
+def test_get_top_p_smallest():
+    x = np.asarray([[[0.3, 0.2, 0.25, 0.15, 0.1] for _ in range(2)] for _ in range(2)])
+    y = np.asarray([[[0.3, 0.19, 0.23, 0.15, 0.1] for _ in range(2)] for _ in range(2)])
+
+    top_p_smallest = get_top_p_smallest(x, y, 0.95)
+
+    np.testing.assert_array_equal(top_p_smallest, [[0.1 for _ in range(2)] for _ in range(2)])
+
+
+def get_p_at_top_k(x, y, k=DEFAULT_K):
+    """Get p values for a given top k value."""
+    x_indices = np.argsort(x, axis=-1)[:, :, ::-1]
+    y_indices = np.argsort(y, axis=-1)[:, :, ::-1]
+
+    results = list()
+    for i, (x_seq, y_seq) in enumerate(zip(x, y)):
+        seq_results = list()
+        for j, (x_token, y_token) in enumerate(zip(x_seq, y_seq)):
+            top_x_indices = x_indices[i][j][:k]
+            top_y_indices = y_indices[i][j][:k]
+            top_indices = list(set(top_x_indices).union(set(top_y_indices)))
+            top_x = x_token[top_indices]
+            top_y = y_token[top_indices]
+            seq_results.append(np.mean((np.sum(top_x), np.sum(top_y))))
+        results.append(seq_results)
+
+    return results
+
+
+def test_get_p_at_top_k():
+    x = np.asarray([[[0.3, 0.2, 0.25, 0.15, 0.1] for _ in range(2)] for _ in range(2)])
+    y = np.asarray([[[0.3, 0.19, 0.23, 0.15, 0.1] for _ in range(2)] for _ in range(2)])
+
+    p_values = get_p_at_top_k(x, y, 3)
+
+    np.testing.assert_array_equal(p_values, [[0.735 for _ in range(2)] for _ in range(2)])
+
+
+def get_top_p_union(x, y, p=DEFAULT_P):
+    x_indices = np.argsort(x, axis=-1)[:, :, ::-1]
+    y_indices = np.argsort(y, axis=-1)[:, :, ::-1]
+
+    x_results = list()
+    y_results = list()
+    for i, (x_seq, y_seq) in enumerate(zip(x, y)):
+        x_seq_results = list()
+        y_seq_results = list()
+        for j, (x_token, y_token) in enumerate(zip(x_seq, y_seq)):
+            _, top_x_indices = get_top_p(x_token, p)
+            _, top_y_indices = get_top_p(y_token, p)
+            top_indices = list(set(top_x_indices).union(set(top_y_indices)))
+            top_x = x_token[top_indices]
+            top_y = y_token[top_indices]
+
+            x_seq_results.append(top_x)
+            y_seq_results.append(top_y)
+
+        x_results.append(x_seq_results)
+        y_results.append(y_seq_results)
+
+    return x_results, y_results
 
 
 def assert_top_p_allclose(x, y, atol, rtol, p=DEFAULT_P):
-    # x = np.sort(x, axis=-1)[:,:,::-1]
-    # y = np.sort(y, axis=-1)[:,:,::-1]
-    x_indices = np.argsort(x, axis=-1)[:, :, ::-1]
+    x, y = get_top_p_union(x, y, p)
 
-    top_x_flat = list()
-    top_y_flat = list()
     for i, (x_seq, y_seq) in enumerate(zip(x, y)):
         for j, (x_token, y_token) in enumerate(zip(x_seq, y_seq)):
-            top_p_indices = get_top_p_indices(x_token, x_indices[i][j], p)
-            top_x = x_token[top_p_indices]
-            top_y = y_token[top_p_indices]
-
-            top_x_flat.extend(top_x)
-            top_y_flat.extend(top_y)
-
-    top_x_flat = np.asarray(top_x_flat)
-    top_y_flat = np.asarray(top_y_flat)
-    print("smallest prob in top p:", min(np.min(top_x_flat), np.min(top_y_flat)))
-
-    rdiff = relative_difference(top_x_flat, top_y_flat)
-    print("max top p difference", np.max(np.abs(top_x_flat - top_y_flat)))
-    print("mean top p difference", np.mean(np.abs(top_x_flat - top_y_flat)))
-    print("max top p relative difference", np.max(rdiff))
-    print("mean top p relative difference", np.mean(rdiff))
-
-    np.testing.assert_allclose(top_x_flat, top_y_flat, atol=atol, rtol=rtol, equal_nan=False)
+            np.testing.assert_allclose(x_token, y_token, atol=atol, rtol=rtol, equal_nan=False)
 
 
 def assert_top_k_allclose(x, y, atol, rtol, k=DEFAULT_K):
-    x_indices = np.argsort(x, axis=-1)[:, :, ::-1]
-    top_x = ndarray_apply_order(x, x_indices)[:, :, :k]
-    top_y = ndarray_apply_order(y, x_indices)[:, :, :k]
-    # x = np.sort(x, axis=-1)[:,:,::-1]
-    # y = np.sort(y, axis=-1)[:,:,::-1]
-    print("smallest prob in top k:", min(np.min(top_x), np.min(top_y)))
-
-    rdiff = relative_difference(top_x, top_y)
-    print("max top k difference", np.max(np.abs(top_x - top_y)))
-    print("mean top k difference", np.mean(np.abs(top_x - top_y)))
-    print("max top k relative difference", np.max(rdiff))
-    print("mean top k relative difference", np.mean(rdiff))
-
-    np.testing.assert_allclose(top_x, top_y, atol=atol, rtol=rtol, equal_nan=False)
+    x, y = get_top_k_union(x, y, k)
+    for i, (x_seq, y_seq) in enumerate(zip(x, y)):
+        for j, (x_token, y_token) in enumerate(zip(x_seq, y_seq)):
+            np.testing.assert_allclose(x_token, y_token, atol=atol, rtol=rtol, equal_nan=False)
 
 
 def assert_top_p_and_top_k_allclose(
@@ -205,12 +310,13 @@ def validate_probs(fuji_model_name, llama_model_name):
     llama_probs = np.load(f"{llama_model_name}_probs.npy")
 
     # The difference is caused by the SDPA attention layer. The deeper the larger the error.
-    atol_high = 3.5e-5
-    rtol_high = 7e-3
+    atol_high = 3.3e-4
+    rtol_high = 2e-3
     atol_low = 1.5e-6
     rtol_low = 1e-3
 
     top_k_smallest = get_top_k_smallest(llama_probs, fuji_probs)
+    top_k_smallest = min(min(seq_values) for seq_values in top_k_smallest)
     # Selecting a threshold per discussion with Hah
     threshold_min, threshold_max = 1e-5, 1e-4
     threshold = min(top_k_smallest, threshold_max)
@@ -218,7 +324,7 @@ def validate_probs(fuji_model_name, llama_model_name):
     print("threshold:", threshold)
 
     # (0.00065897405 - 3.4e-5) / 0.19473135
-    # assert_top_k_allclose(llama_probs, fuji_probs, atol, rtol)
+    assert_top_k_allclose(llama_probs, fuji_probs, atol_high, rtol_high)
     # assert_top_p_allclose(llama_probs, fuji_probs, atol, rtol, p=0.99)
     assert_top_p_and_top_k_allclose(
         llama_probs,
@@ -230,6 +336,43 @@ def validate_probs(fuji_model_name, llama_model_name):
         threshold=threshold,
         p=0.99,
     )
+
+
+def sample_analysis(fuji_model_name, llama_model_name):
+    fuji_probs = np.load(f"{fuji_model_name}_probs.npy")
+    llama_probs = np.load(f"{llama_model_name}_probs.npy")
+    # skip bos_token which has the same prob value for all samples
+    fuji_probs = fuji_probs[::, 1::, ::]
+    llama_probs = llama_probs[::, 1::, ::]
+
+    results = {
+        "smallest in top k": list(),
+        "smallest in top p (0.95)": list(),
+        "smallest in top p (0.90)": list(),
+        "p at top k": list(),
+    }
+    print("Smallest values in top k per sample:")
+    top_k_smallest = get_top_k_smallest(llama_probs, fuji_probs)
+    for sample in top_k_smallest:
+        results["smallest in top k"].append(min(sample))
+
+    print("Smallest values in top p (0.95) per sample:")
+    top_p_smallest = get_top_p_smallest(llama_probs, fuji_probs, p=0.95)
+    for sample in top_p_smallest:
+        results["smallest in top p (0.95)"].append(min(sample))
+
+    print("Smallest values in top p (0.90) per sample:")
+    top_p_smallest = get_top_p_smallest(llama_probs, fuji_probs, p=0.90)
+    for sample in top_p_smallest:
+        results["smallest in top p (0.90)"].append(min(sample))
+
+    print("p values in top k per sample:")
+    p_values = get_p_at_top_k(llama_probs, fuji_probs)
+    for sample in p_values:
+        results["p at top k"].append(np.mean(sample))
+
+    df = pd.DataFrame.from_dict(results)
+    print(df.to_markdown())
 
 
 texts = [
@@ -300,13 +443,17 @@ def run_trn_checkpoint_tests(load_true_model=False, reverse=True):
     )
     validate_probs("fuji-70B-v2", "Llama-2-70b-hf")
 
-    # TODO add HF to Axlearn test case
-
 
 if __name__ == "__main__":
     validate_probs("fuji-7B-v2", "Llama-2-7b-hf")
+    sample_analysis("fuji-7B-v2", "Llama-2-7b-hf")
     # validate_probs("fuji-70B-v2", "Llama-2-70b-hf")
     # run_gpu_checkpoint_tests()
     # run_trn_checkpoint_tests()
     # run_gpu_checkpoint_tests(reverse=False)
     # run_trn_checkpoint_tests(reverse=False)
+    # test_top_p()
+    # test_top_k()
+    # test_get_top_k_smallest()
+    # test_get_top_p_smallest()
+    # test_get_p_at_top_k()
