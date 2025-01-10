@@ -58,7 +58,7 @@ from axlearn.experiments.text.gpt.common import model_config as common_model_con
 from axlearn.experiments.text.gpt.common import scaled_hidden_dim
 from axlearn.experiments.trainer_config_utils import TrainerConfigFn
 
-MODEL_SIZES = ("test", "1B", "3B", "7B", "8B", "70B")
+MODEL_SIZES = ("test", "1B", "3B", "7B", "8B", "70B", "7Bfsdp16tp4")
 
 
 class Version(enum.Enum):
@@ -101,6 +101,7 @@ TOTAL_TOKENS = {
         "test": 2 * (1024**4),  # 2T tokens
         "7B": 2 * (1024**4),  # 2T tokens
         "70B": 2 * (1024**4),  # 2T tokens
+        "7Bfsdp16tp4": 2 * (1024**4),  # 2T tokens
     },
     Version.V3: {
         "test": 15 * (1024**4),  # 15T tokens
@@ -210,10 +211,45 @@ def get_trainer_kwargs(
                 ),
             )
         )
+    elif model_size == "7Bfsdp16tp4":
+        TRN_MODEL_AXIS_SIZE = 4
+        train_batch_size = 64 # FSDP 16, GRAD_ACCUM 1, MICROBATCH 4
+        trainer_kwargs = dict(
+            model_kwargs=dict(
+                num_layers=4,
+                hidden_dim=128 * 32,
+                num_heads=32,
+                num_kv_heads=num_kv_heads,
+                rope_theta=rope_theta,
+                shared_lm_head=True,
+                flash_attention=True,
+                stack_cfg=None if backend != "neuron" else StackedTransformerLayer.default_config(),
+            ),
+            learner_kwargs=dict(peak_lr=3e-4, weight_decay=0.1),
+            max_sequence_length=max_sequence_length,
+            train_batch_size=train_batch_size,
+            input_partition_type=None if backend != "neuron" else DataPartitionType.BATCH,
+            max_step=3000,
+            mesh_shape=mesh_shape_from_axes(data=-1, fsdp=4),
+            # mesh_shape=mesh_shape_from_axes(fsdp=-1, model=4),
+            mesh_rules=(
+                (
+                    "neuron-(trn2|trn2n).48xlarge-64",
+                    mesh_shape_from_axes(fsdp=-1, model=TRN_MODEL_AXIS_SIZE),
+                ),
+                (
+                    "neuron-(trn1|trn1n).32xlarge-64",
+                    mesh_shape_from_axes(fsdp=-1, model=8),
+                ),
+            ),
+            eval_batch_size=64,
+            eval_every_n_steps=1,
+            save_every_n_steps=500_000,
+        )
     elif model_size == "7B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=32,
+                num_layers=4,
                 hidden_dim=128 * 32,
                 num_heads=32,
                 num_kv_heads=num_kv_heads,
@@ -415,7 +451,7 @@ def get_trainer_kwargs(
             ),
             learner_kwargs=dict(peak_lr=1.5e-4, weight_decay=0.1),
             max_sequence_length=max_sequence_length,
-            train_batch_size=train_batch_size,
+            train_batch_size=int((jax.device_count()/4)),
             input_partition_type=None if backend != "neuron" else DataPartitionType.BATCH,
             max_step=max_step,
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
