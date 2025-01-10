@@ -198,7 +198,12 @@ class BaseMetricCalculator(Module):
             ),
             out_shardings=dict(
                 replicated=None,
-                per_example=utils.data_partition_type_to_spec( partition=self.config.input_partition_type, batch_axis_names=self.config.batch_axis_names),
+                per_example=(
+                    # loss
+                    None,
+                    # logits
+                    utils.data_partition_type_to_spec( partition=self.config.input_partition_type, batch_axis_names=self.config.batch_axis_names),
+                ),
             ),
         )
 
@@ -338,8 +343,7 @@ class ModelSummaryAccumulator(BaseMetricCalculator):
     # pylint: disable-next=no-self-use
     def _per_example_outputs(self, model_outputs: NestedTensor) -> NestedTensor:
         # Outputs nothing by default. Subclass can override this class to output something.
-        del model_outputs
-        return {}
+        return model_outputs
 
     def _process_summaries(self, summaries: dict[str, Any]):
         self._metric_accumulator.update(summaries)

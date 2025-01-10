@@ -490,7 +490,7 @@ class TensorStoreStateStorage(StateStorage):
         if jax.process_index() == 0:
             if not ckpt_dir.startswith("gs://"):
                 dirs = sorted(list(set(os.path.dirname(path) for path in spec.storage_paths)))
-                logging.info("Creating directories: %s", dirs)
+                # logging.info("Creating directories: %s", dirs)
                 list(self._executor.map(fs.makedirs, dirs))
                 logging.info("All directories created")
         # Wait for directory and index creation.
