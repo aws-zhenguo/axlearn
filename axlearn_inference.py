@@ -9,22 +9,19 @@ from jax import numpy as jnp
 from transformers import AutoConfig, LlamaForCausalLM
 
 from axlearn.common import config, evaler, input_tf_data, measurement, utils
-from axlearn.common.checkpointer import Checkpointer
 from axlearn.common.config import config_for_function
 from axlearn.common.decoder import LmHead
 from axlearn.common.decoding import StopOnSubsequence
-from axlearn.common.inference import InferenceRunner
 from axlearn.common.inference_pipeline import pop_string_tensors
 from axlearn.common.input_lm import lm_text_preprocessor, text2text_lm_input, text_to_lm_eval_input
 from axlearn.common.module import functional
-from axlearn.experiments import get_named_trainer_config
 from axlearn.experiments.text.common import vocab
 from axlearn.experiments.text.gpt import c4_trainer
-from axlearn.vision import image_classification, input_image, resnet
 from utils import (
     copy_files,
     get_fuji_and_llama,
     get_mesh,
+    get_trainer_config,
     init_infer_runner,
     load_checkpoint,
     parameters_from_llama,
@@ -36,15 +33,6 @@ from utils import (
 
 sentencepiece_model_name = "bpe_32k_c4.model"
 use_transformers = False
-
-
-def get_trainer_config(config_name):
-    trainer_config_fn = get_named_trainer_config(
-        config_name, config_module="axlearn.experiments.text.gpt.c4_trainer"
-    )
-    # TODO trainer_config connot be removed for now since mesh is needed to save checkpoint
-    trainer_config = trainer_config_fn()
-    return trainer_config
 
 
 def get_transformers_tokenizer():
@@ -430,10 +418,23 @@ if __name__ == "__main__":
     #     load_true_model=True,
     #     reverse=True,
     #     texts=texts,
-    #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000"
+    #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000",
     #     trn_checkpoint=False,
     #     use_gqa=False,
     # )
+
+    # Axlearn to Llama 7B TRN 4L true model
+    validate_conversion(
+        "fuji-7B-v2",
+        "Llama-2-7b-hf",
+        load_true_model=True,
+        reverse=True,
+        texts=texts,
+        # fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000",
+        fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/validation/fuji-7B-v2-4l/step_00022794",
+        trn_checkpoint=True,
+        use_gqa=False,
+    )
 
     # Axlearn to Llama 70B GPU true model
     # validate_conversion(
@@ -468,16 +469,16 @@ if __name__ == "__main__":
     # )
 
     # Axlearn to Llama 70B TRN true model
-    validate_conversion(
-        "fuji-70B-v2",
-        "Llama-2-70b-hf",
-        load_true_model=True,
-        reverse=True,
-        texts=texts,
-        fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/241230232345/axlearn_out/checkpoints/step_00000002",
-        trn_checkpoint=True,
-        use_gqa=True,
-    )
+    # validate_conversion(
+    #     "fuji-70B-v2",
+    #     "Llama-2-70b-hf",
+    #     load_true_model=True,
+    #     reverse=True,
+    #     texts=texts,
+    #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/241230232345/axlearn_out/checkpoints/step_00000002",
+    #     trn_checkpoint=True,
+    #     use_gqa=True,
+    # )
 
     # convert_and_save_checkpoint(
     #     "fuji-7B-v2",
@@ -502,7 +503,17 @@ if __name__ == "__main__":
     #     "Llama-2-7b-hf",
     #     load_true_model=True,
     #     reverse=True,
-    #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000"
+    #     save_name="Llama-2-7b-hf",
+    #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/Llama-2-7b-trn/step_00022794",
+    #     trn_checkpoint=True,
+    #     use_gqa=False,
+    # )
+    # convert_and_save_checkpoint(
+    #     "fuji-7B-v2",
+    #     "Llama-2-7b-hf",
+    #     load_true_model=True,
+    #     reverse=True,
+    #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000",
     #     save_name="baseline_34000",
     #     trn_checkpoint=False,
     #     use_gqa=False,

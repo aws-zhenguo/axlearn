@@ -16,9 +16,18 @@ from axlearn.common.checkpointer import Checkpointer, CheckpointValidationType
 from axlearn.common.decoder import LmHead
 from axlearn.common.inference import InferenceRunner, _InferenceRunnerState
 from axlearn.common.utils import PartitionSpec, TensorSpec
+from axlearn.experiments import get_named_trainer_config
 from axlearn.experiments.text.gpt import c4_trainer
 
 seed = 123
+
+
+def get_trainer_config(config_name):
+    trainer_config_fn = get_named_trainer_config(
+        config_name, config_module="axlearn.experiments.text.gpt.c4_trainer"
+    )
+    trainer_config = trainer_config_fn()
+    return trainer_config
 
 
 def get_mesh(trainer_config):
@@ -694,7 +703,7 @@ def get_fuji_and_llama(
         # adjust num_layers to match the value in {llama_model_name}_config.json
         model_config.decoder.transformer.set(num_layers=llama.config.num_hidden_layers)
         # fuji model has different vocab size even for the same model size
-        # model_config.decoder.set(vocab_size=llama.config.vocab_size)
+        model_config.decoder.set(vocab_size=llama.config.vocab_size)
 
         if fuji_model_name == "fuji-7B-v2":
             # llama2 7B does not share lm_head with embedding, but fuji does
@@ -707,6 +716,16 @@ def get_fuji_and_llama(
         state = fuji.initialize_parameters_recursively(prng_key=prng_key)
 
     return fuji, state, llama
+
+
+def generate_random_init_checkpoint(fuji_model_name, checkpoint_path):
+    prng_key = jax.random.PRNGKey(0)
+    trainer_config = get_trainer_config(fuji_model_name)
+    model_config = trainer_config.model
+    model_config.set(name="model")
+    fuji = model_config.instantiate(parent=None)
+    state = fuji.initialize_parameters_recursively(prng_key=prng_key)
+    save_axlearn_checkpoint(fuji, state, checkpoint_path, get_mesh(trainer_config))
 
 
 def validate_weights(fuji_model_name, llama_model_name, load_true_model=False, reverse=False):
@@ -748,5 +767,10 @@ def run_all_tests():
 if __name__ == "__main__":
     # validate_weights("fuji-7B-v2", "Llama-2-7b-hf")
     # validate_weights("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True)
-    validate_weights("fuji-7B-v2", "Llama-2-7b-hf", reverse=True)
+    # validate_weights("fuji-7B-v2", "Llama-2-7b-hf", reverse=True)
     # validate_weights("fuji-1B-v3", "Llama-3.2-1B")
+    # copy_files("Llama-2-7b-hf", "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/baseline_34000/")
+    generate_random_init_checkpoint(
+        "fuji-7B-v2",
+        "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/validation/fuji-7B-v2-4l",
+    )
