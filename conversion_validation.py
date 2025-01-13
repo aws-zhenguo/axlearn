@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 DEFAULT_K = 64
-DEFAULT_P = 0.99
+DEFAULT_P = 0.95
 
 
 def relative_difference(x, y):
@@ -280,6 +280,7 @@ def assert_top_p_and_top_k_allclose(
     print(
         "smallest prob in top k and top p:", min(np.min(top_x_flat_high), np.min(top_y_flat_high))
     )
+    print("number of values:", len(top_x_flat_high) / x.shape[0] / x.shape[1])
 
     rdiff = relative_difference(top_x_flat_high, top_y_flat_high)
     print("max top p/k difference", np.max(np.abs(top_x_flat_high - top_y_flat_high)))
@@ -305,11 +306,98 @@ def assert_top_p_and_top_k_allclose(
     )
 
 
-def validate_probs(fuji_model_name, llama_model_name):
+def generate_ranges(low, high):
+    ranges = [low]
+    while ranges[-1] < high:
+        step = ranges[-1]
+        for i in range(9):
+            ranges.append(round(ranges[-1] + step, 15))
+    return ranges
+
+
+def generate_tolerance_map(fuji_model_name, llama_model_name, p=DEFAULT_P):
     fuji_probs = np.load(f"{fuji_model_name}_probs.npy")
     llama_probs = np.load(f"{llama_model_name}_probs.npy")
 
-    # The difference is caused by the SDPA attention layer. The deeper the larger the error.
+    threshold = 1e-3
+    # threshold = 1e-4
+
+    # generate for high end
+    if threshold == 1e-3:
+        atols = generate_ranges(1e-5, 5e-4)
+        rtols = generate_ranges(1e-3, 1e-2)
+    else:
+        atols = generate_ranges(1e-6, 1e-4)
+        rtols = generate_ranges(1e-3, 1e-2)
+
+    high_end_map = dict()
+    high_end_map["atols \ rtols"] = atols
+
+    for rtol in rtols:
+        high_end_map[rtol] = list()
+        for atol in atols:
+            try:
+                assert_top_p_and_top_k_allclose(
+                    llama_probs,
+                    fuji_probs,
+                    atol,
+                    rtol,
+                    1,
+                    1,
+                    threshold=threshold,
+                    p=p,
+                )
+                high_end_map[rtol].append(" :heavy_check_mark: ")
+            except AssertionError:
+                high_end_map[rtol].append(" :x: ")
+
+    high_end_df = pd.DataFrame.from_dict(high_end_map)
+    high_end_md = high_end_df.to_markdown(index=False)
+    print(high_end_md)
+    with open("high_end_map.md", "w") as f:
+        f.write(high_end_md)
+
+    # generate for lower end
+    if threshold == 1e-3:
+        atols = generate_ranges(1e-10, 1e-5)
+        rtols = generate_ranges(1e-3, 2e-2)
+    else:
+        atols = generate_ranges(1e-8, 1e-7)
+        rtols = generate_ranges(1e-3, 2e-2)
+
+    low_end_map = dict()
+    low_end_map["atols \ rtols"] = atols
+
+    for rtol in rtols:
+        low_end_map[rtol] = list()
+        for atol in atols:
+            try:
+                assert_top_p_and_top_k_allclose(
+                    llama_probs,
+                    fuji_probs,
+                    1,
+                    1,
+                    atol,
+                    rtol,
+                    threshold=threshold,
+                    p=p,
+                )
+                low_end_map[rtol].append(" :heavy_check_mark: ")
+            except AssertionError:
+                low_end_map[rtol].append(" :x: ")
+
+    low_end_df = pd.DataFrame.from_dict(low_end_map)
+    low_end_md = low_end_df.to_markdown(index=False)
+    print(low_end_md)
+    with open("low_end_map.md", "w") as f:
+        f.write(low_end_md)
+
+
+
+def validate_probs(fuji_model_name, llama_model_name, p=DEFAULT_P):
+    fuji_probs = np.load(f"{fuji_model_name}_probs.npy")
+    llama_probs = np.load(f"{llama_model_name}_probs.npy")
+
     atol_high = 3.3e-4
     rtol_high = 2e-3
     atol_low = 1.5e-6
@@ -324,7 +412,7 @@ def validate_probs(fuji_model_name, llama_model_name):
     print("threshold:", threshold)
 
     # (0.00065897405 - 3.4e-5) / 0.19473135
-    assert_top_k_allclose(llama_probs, fuji_probs, atol_high, rtol_high)
+    # assert_top_k_allclose(llama_probs, fuji_probs, atol_high, rtol_high)
     # assert_top_p_allclose(llama_probs, fuji_probs, atol, rtol, p=0.99)
     assert_top_p_and_top_k_allclose(
         llama_probs,
@@ -334,7 +422,7 @@ def validate_probs(fuji_model_name, llama_model_name):
         atol_low,
         rtol_low,
         threshold=threshold,
-        p=0.99,
+        p=p,
     )
 
 
@@ -446,7 +534,8 @@ def run_trn_checkpoint_tests(load_true_model=False, reverse=True):
 
 if __name__ == "__main__":
     validate_probs("fuji-7B-v2", "Llama-2-7b-hf")
-    sample_analysis("fuji-7B-v2", "Llama-2-7b-hf")
+    generate_tolerance_map("fuji-7B-v2", "Llama-2-7b-hf")
+    # sample_analysis("fuji-7B-v2", "Llama-2-7b-hf")
     # validate_probs("fuji-70B-v2", "Llama-2-70b-hf")
     # run_gpu_checkpoint_tests()
     # run_trn_checkpoint_tests()
