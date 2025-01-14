@@ -21,8 +21,8 @@ from axlearn.experiments import get_named_trainer_config
 
 
 seed = 123
-
 backend = jax.default_backend()
+
 
 def get_trainer_config(config_name):
     trainer_config_fn = get_named_trainer_config(
@@ -632,7 +632,6 @@ def _parameters_to_llama_trn(state: dict, llama, use_gqa=False) -> dict:
 def get_fuji_and_llama(
     fuji_model_name,
     llama_model_name,
-    trainer_config,
     load_true_model=False,
     reverse=False,
     fuji_model_path=None,
@@ -648,6 +647,7 @@ def get_fuji_and_llama(
     # trainer_config_map = c4_trainer.named_trainer_configs()
     # trainer_config_fn = trainer_config_map[fuji_model_name]
     # trainer_config = trainer_config_fn()
+    trainer_config = get_trainer_config(fuji_model_name)
     model_config = trainer_config.model
     model_config.set(name="model")
 
