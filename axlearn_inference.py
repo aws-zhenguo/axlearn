@@ -1,42 +1,35 @@
-import contextlib
+from collections import defaultdict
+
 import jax
 import numpy as np
 import seqio
 import tensorflow as tf
-# import torch
+import torch
+from jax import numpy as jnp
 from transformers import AutoConfig, LlamaForCausalLM
 
-from collections import defaultdict
-from jax import numpy as jnp
 from axlearn.common import config, evaler, input_tf_data, measurement, utils
-from axlearn.common.checkpointer import Checkpointer
 from axlearn.common.config import config_for_function
 from axlearn.common.decoder import LmHead
 from axlearn.common.decoding import StopOnSubsequence
-from axlearn.common.inference import InferenceRunner
 from axlearn.common.inference_pipeline import pop_string_tensors
 from axlearn.common.input_lm import lm_text_preprocessor, text2text_lm_input, text_to_lm_eval_input
 from axlearn.common.module import functional
-from axlearn.experiments import get_named_trainer_config
 from axlearn.experiments.text.common import vocab
 from axlearn.experiments.text.gpt import c4_trainer
-from axlearn.vision import image_classification, input_image, resnet
 from utils import (
-    seed,
+    copy_files,
     get_fuji_and_llama,
-    load_checkpoint,
     get_mesh,
     get_trainer_config,
+    init_infer_runner,
+    load_checkpoint,
     parameters_from_llama,
     parameters_to_llama,
     save_axlearn_checkpoint,
     save_transformers_checkpoint,
-    copy_tokenizer_files,
-    init_infer_runner,
+    seed,
 )
-
-from absl import app, flags
-from axlearn.common import launch, launch_trainer, measurement
 
 sentencepiece_model_name = "bpe_32k_c4.model"
 use_transformers = False
@@ -104,7 +97,6 @@ def run_inference(texts, config_name, checkpoint_path):
 
     results = list()
 
-    import pdb; pdb.set_trace()
     with mesh:
         model_param_specs = model.create_parameter_specs_recursively()
         model_param_partition_specs = jax.tree.map(lambda spec: spec.mesh_axes, model_param_specs)
@@ -122,11 +114,9 @@ def run_inference(texts, config_name, checkpoint_path):
             input_texts = sentence_piece_vocab.tokenizer.decode_ids(input_ids)
             input_batch, input_batch_str_tensors = pop_string_tensors(input_batch)
             input_batch = utils.as_numpy_array(input_batch)
-            import pdb; pdb.set_trace()
-            global_input_batch = utils.host_to_global_device_array(input_batch, partition=trainer_config.input_partition_type, batch_axis_names=trainer_config.batch_axis_names)
-            # global_input_batch = utils.host_to_global_device_array(
-            #     input_batch, partition=infer_runner_config.input_batch_partition_spec
-            # )
+            global_input_batch = utils.host_to_global_device_array(
+                input_batch, partition=infer_runner_config.input_batch_partition_spec
+            )
             output = method_runner(global_input_batch)
             output_batch = utils.global_to_host_array(
                 output.output_batch,
@@ -142,7 +132,11 @@ def run_inference(texts, config_name, checkpoint_path):
             output_texts = sentence_piece_vocab.tokenizer.decode_ids(output_ids.tolist())
             # sentence_piece_vocab.tokenizer.pad_id()  # 0
             # sentence_piece_vocab.tokenizer.eos_id()  # 1
+            # sentence_piece_vocab.tokenizer.unk_id()  # 2
             # sentence_piece_vocab.tokenizer.bos_id()  # -1
+            # sentence_piece_vocab.tokenizer.id_to_piece(0) <pad>
+            # sentence_piece_vocab.tokenizer.id_to_piece(1) </s>
+            # sentence_piece_vocab.tokenizer.id_to_piece(2) <unk>
 
             results.extend(output_texts)
             print(output_texts)
@@ -187,102 +181,48 @@ def validate_conversion(
     padded_ids = [pad_list(cur_ids, 6) for cur_ids in ids]
     ids = [cur_ids[:4] for cur_ids in padded_ids]
     target_ids = [cur_ids[1:5] for cur_ids in padded_ids]
-    # torch_ids = torch.from_numpy(np.asarray(ids))
-    # torch_target_ids = torch.from_numpy(np.asarray(target_ids))
+    torch_ids = torch.from_numpy(np.asarray(ids))
+    torch_target_ids = torch.from_numpy(np.asarray(target_ids))
 
     # convert params
-    # if reverse:
-    #     llama_state_dict = parameters_to_llama(
-    #         state, llama, use_gqa=use_gqa, trn_checkpoint=trn_checkpoint
-    #     )
-    #     llama.load_state_dict(llama_state_dict)
-    # else:
-    #     state = parameters_from_llama(llama, state, use_gqa=use_gqa, trn_checkpoint=trn_checkpoint)
-
-    trainer_config = get_trainer_config(fuji_model_name)
-    trainer_config.dir = "runs/artifacts/2025010701/axlearn_out/"
-    trainer_config.evalers["validation"].metric_calculator = trainer_config.evalers["validation"].metric_calculator.set(model_method_kwargs={"return_aux": True})
-    # trainer = trainer_config.instantiate(parent=None)
-    # evaler = trainer._evalers["validation"]
-    # mesh = get_mesh(trainer_config)
-    evaler_config = trainer_config.evalers["validation"]
-    evaler_config.name = "validation"
-    evaler_config.summary_writer.dir = "../runs/artifacts/axlearn_out/summaries/validation"
-
-    # with mesh:
-    with get_mesh(trainer_config):
-    # with (
-    #         trainer.mesh(),
-    #         trainer._context_manager(),
-    #     ):
-        model_param_specs = fuji.create_parameter_specs_recursively()
-        model_param_partition_specs = jax.tree.map(lambda spec: spec.mesh_axes, model_param_specs)
-        evaler = evaler_config.instantiate(
-            parent=None,
-            model=fuji,
-            model_param_partition_specs=model_param_partition_specs,
+    if reverse:
+        llama_state_dict = parameters_to_llama(
+            state, llama, use_gqa=use_gqa, trn_checkpoint=trn_checkpoint
         )
-        # import pdb; pdb.set_trace()
-        # trainer._prepare_training(prng_key)
-        # prng_key, summaries, _ = evaler.eval_step(6, prng_key=prng_key, model_params=state, train_summaries={}, force_run=True)
-        prng_key = jax.random.PRNGKey(seed)
-        input_batch = {"input_ids": jnp.asarray(ids), "target_labels": jnp.asarray(target_ids)}
-        global_input_batch = utils.host_to_global_device_array(input_batch, partition=trainer_config.input_partition_type, batch_axis_names=trainer_config.batch_axis_names)
-        # model param not actually used in ModelSummaryAccumulator
-        metric_calculator_state = evaler.metric_calculator.init_state(
-            prng_key=prng_key, model_params=state
-        )
-        next_key, forward_prng = jax.random.split(prng_key)
-        forward_outputs = evaler.metric_calculator.forward(
-            global_input_batch,
-            model_params=state,
-            state=metric_calculator_state,
-        )
-        # prng_key, summaries, _ = evaler.eval_step(
-        #     22,
-        #     prng_key=prng_key,
-        #     model_params=state,
-        #     train_summaries=None,
-        #     force_run=True,
-        # )
-        # import pdb; pdb.set_trace()
-        print("forward outputs", forward_outputs)
-        loss, fuji_outputs = forward_outputs["output"]
-        fuji_logits = fuji_outputs["logits"]
-        print(fuji_logits)
-        # (loss, aux), output_collection = functional(
-        #     fuji,
-        #     is_training=False,
-        #     prng_key=forward_prng,
-        #     state=state,
-        #     inputs={"input_batch": global_input_batch, "return_aux": True},
-        # )
+        llama.load_state_dict(llama_state_dict)
+    else:
+        state = parameters_from_llama(llama, state, use_gqa=use_gqa, trn_checkpoint=trn_checkpoint)
 
-    # import pdb; pdb.set_trace()
-    # with torch.no_grad():
-    #     output = llama(torch_ids, labels=torch_target_ids)
-    #     # transformers will shift the ids when calculating the loss
-    #     # so to make sure the loss would match, adjust the input
-    #     # https://github.com/huggingface/transformers/blob/641adca55832ed9c5648f54dcd8926d67d3511db/src/transformers/models/llama/modeling_llama.py#L833
-    #     extra_ids = [cur_ids[:5] for cur_ids in padded_ids]
-    #     extra_ids = torch.from_numpy(np.asarray(extra_ids))
-    #     output_with_loss = llama(extra_ids, labels=extra_ids)
-    #     llama_loss = output_with_loss.loss
+    input_batch = {"input_ids": jnp.asarray(ids), "target_labels": jnp.asarray(target_ids)}
+    (loss, aux), output_collection = functional(
+        fuji,
+        is_training=False,
+        prng_key=jax.random.PRNGKey(seed),
+        state=state,
+        inputs={"input_batch": input_batch, "return_aux": True},
+    )
 
-    fuji_logits = np.asarray(fuji_logits)
-    # llama_logits = output.logits.numpy()
-    # rdiff = relative_difference(fuji_logits, llama_logits)
-    # jaccard_indices = average_top_k_jaccard_similarity(fuji_logits, llama_logits)
-    # assert isinstance(fuji_logits.dtype, np.dtypes.Float32DType)
+    with torch.no_grad():
+        output = llama(torch_ids, labels=torch_target_ids)
+        # transformers will shift the ids when calculating the loss
+        # so to make sure the loss would match, adjust the input
+        # https://github.com/huggingface/transformers/blob/641adca55832ed9c5648f54dcd8926d67d3511db/src/transformers/models/llama/modeling_llama.py#L833
+        extra_ids = [cur_ids[:5] for cur_ids in padded_ids]
+        extra_ids = torch.from_numpy(np.asarray(extra_ids))
+        output_with_loss = llama(extra_ids, labels=extra_ids)
+        llama_loss = output_with_loss.loss
+
+    fuji_logits = np.asarray(aux["logits"])
+    llama_logits = output.logits.numpy()
+    assert isinstance(aux["logits"].dtype, np.dtypes.Float32DType)
 
     # TODO should not do the softmax myself
-    fuji_probs = np.asarray(jax.nn.softmax(fuji_logits))
-    print(fuji_probs)
-    # llama_probs = torch.softmax(output.logits, dim=-1).numpy()
+    fuji_probs = np.asarray(jax.nn.softmax(aux["logits"]))
+    llama_probs = torch.softmax(output.logits, dim=-1).numpy()
+    assert isinstance(fuji_probs.dtype, np.dtypes.Float32DType)
 
     np.save(f"{fuji_model_name}_probs", fuji_probs)
-    assert isinstance(fuji_probs.dtype, np.dtypes.Float32DType)
-    # np.save(f"{llama_model_name}_probs", llama_probs)
+    np.save(f"{llama_model_name}_probs", llama_probs)
 
 
 def validate_conversion_trn(
@@ -292,7 +232,8 @@ def validate_conversion_trn(
 ):
     """Run forward pass on text on TRN device.
 
-    changes from this commit are needed to get logit output.
+    changes from this commit are needed to get logit output. Also, this only works in TRN device,
+    because TRN branch has changes on functions like utils.host_to_global_device_array
     """
     trainer_config = get_trainer_config(fuji_model_name)
     infer_runner, infer_runner_config = init_infer_runner(trainer_config, fuji_model_path)
@@ -309,11 +250,16 @@ def validate_conversion_trn(
     ids = [cur_ids[:4] for cur_ids in padded_ids]
     target_ids = [cur_ids[1:5] for cur_ids in padded_ids]
 
+    trainer_config = get_trainer_config(fuji_model_name)
     trainer_config.dir = "runs/artifacts/validate_trn/axlearn_out/"
-    trainer_config.evalers["validation"].metric_calculator = trainer_config.evalers["validation"].metric_calculator.set(model_method_kwargs={"return_aux": True})
+    trainer_config.evalers["validation"].metric_calculator = trainer_config.evalers[
+        "validation"
+    ].metric_calculator.set(model_method_kwargs={"return_aux": True})
     evaler_config = trainer_config.evalers["validation"]
     evaler_config.name = "validation"
-    evaler_config.summary_writer.dir = "runs/artifacts/validate_trn/axlearn_out/summaries/validation"
+    evaler_config.summary_writer.dir = (
+        "runs/artifacts/validate_trn/axlearn_out/summaries/validation"
+    )
 
     with get_mesh(trainer_config):
         model_param_specs = fuji.create_parameter_specs_recursively()
@@ -326,7 +272,11 @@ def validate_conversion_trn(
 
         prng_key = jax.random.PRNGKey(seed)
         input_batch = {"input_ids": jnp.asarray(ids), "target_labels": jnp.asarray(target_ids)}
-        global_input_batch = utils.host_to_global_device_array(input_batch, partition=trainer_config.input_partition_type, batch_axis_names=trainer_config.batch_axis_names)
+        global_input_batch = utils.host_to_global_device_array(
+            input_batch,
+            partition=trainer_config.input_partition_type,
+            batch_axis_names=trainer_config.batch_axis_names,
+        )
         # model param not actually used in ModelSummaryAccumulator
         metric_calculator_state = evaler.metric_calculator.init_state(
             prng_key=prng_key, model_params=state
@@ -341,8 +291,9 @@ def validate_conversion_trn(
         loss, fuji_outputs = forward_outputs["output"]
         fuji_logits = np.asarray(fuji_outputs["logits"])
         fuji_probs = np.asarray(jax.nn.softmax(fuji_logits))
-        print("fuji_probs:", fuji_probs)
+
     np.save(f"{fuji_model_name}_trn_probs", fuji_probs)
+    print(fuji_probs[0][0])
     assert isinstance(fuji_logits.dtype, np.dtypes.Float32DType)
     assert isinstance(fuji_probs.dtype, np.dtypes.Float32DType)
 
@@ -375,9 +326,7 @@ def convert_and_save_checkpoint(
             f"/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/{save_name}"
         )
         save_transformers_checkpoint(llama, checkpoint_path)
-        # Seems spm and transformers tokenizers are not matching
-        # copy_tokenizer_files(converted_tokenizer_path, checkpoint_path)
-        # Remember to copy the generation_config.json to checkpoint folder to get similar results
+        copy_files(llama_model_name, checkpoint_path)
     else:
         state = parameters_from_llama(llama, state, use_gqa=use_gqa, trn_checkpoint=trn_checkpoint)
         checkpoint_path = (
@@ -409,9 +358,6 @@ def get_fuji_with_llama_weights(config_name):
 
 
 def generate(texts, config_name, checkpoint_path):
-    # TODO init model and load checkpoint without InferenceRunner
-    # model = infer_runner.model
-    # model_state = infer_runner._inference_runner_state.model
     results = list()
     batch_size, max_len = 8, 4096
     trainer_config = get_trainer_config(config_name)
@@ -421,9 +367,6 @@ def generate(texts, config_name, checkpoint_path):
         # model, model_state = get_fuji_with_llama_weights(config_name)
         model_config = trainer_config.model
         model_config.set(name="model")
-        # TODO remove the following two lines
-        # model_config.decoder.set(lm_head=LmHead.default_config())
-        # model_config.decoder.set(vocab_size=32000)
 
         model = model_config.instantiate(parent=None)
         model_state = load_checkpoint(trainer_config, checkpoint_path)
@@ -444,9 +387,6 @@ def generate(texts, config_name, checkpoint_path):
     else:
         model_config = trainer_config.model
         model_config.set(name="model")
-        # TODO remove the following two lines
-        # model_config.decoder.set(lm_head=LmHead.default_config())
-        # model_config.decoder.set(lm_head=None)
 
         model = model_config.instantiate(parent=None)
         model_state = load_checkpoint(trainer_config, checkpoint_path)
@@ -459,7 +399,6 @@ def generate(texts, config_name, checkpoint_path):
         stop_decoding_condition = StopOnSubsequence([[model.decoder.config.eos_token_id]])
 
         input_ids = tokenizer.encode(texts)
-        # TODO the inference for fuji model seem to be broken
 
         # add padding
         def pad_list(l, max_len, fill_value=tokenizer.pad_id):
@@ -472,7 +411,6 @@ def generate(texts, config_name, checkpoint_path):
     method = "sample_decode"
     # method="beam_search_decode"
 
-    # TODO decoder batch mode
     for input_id in input_ids:
         # follow decoder input format https://github.com/apple/axlearn/blob/a15a3bcbb976c14db157a8958df368a48c614c1f/axlearn/common/decoder_test.py#L569
         input_batch = {
@@ -485,12 +423,11 @@ def generate(texts, config_name, checkpoint_path):
             input_batch["stop_decoding_condition"] = stop_decoding_condition
         # TODO add mask for batch running https://github.com/apple/axlearn/blob/a15a3bcbb976c14db157a8958df368a48c614c1f/axlearn/common/decoder_test.py#L563C13-L563C24
 
-        # TODO how to get model states with invocation context without using infer_runner? https://github.com/apple/axlearn/blob/a15a3bcbb976c14db157a8958df368a48c614c1f/axlearn/experiments/text/gpt/param_converter_test.py#L105
         # TODO the decoding process does not seem to start from the last token, but start from the first token when testing with axlearn model
         output, _ = functional(
             model,
             is_training=False,
-            # prng_key=jax.random.PRNGKey(seed=seed),
+            prng_key=jax.random.PRNGKey(seed=seed),
             state=model_state,
             inputs=input_batch,
             method=method,
@@ -514,6 +451,14 @@ def generate(texts, config_name, checkpoint_path):
     return results
 
 
+def extend_texts(texts, batch_size=16):
+    results = list()
+    while len(results) < batch_size:
+        results.extend(texts)
+
+    return results[:batch_size]
+
+
 if __name__ == "__main__":
     texts = [
         "How are you doing?",
@@ -522,18 +467,12 @@ if __name__ == "__main__":
         "California is a state in",
         "Can you tell me something about California state?\n",
     ]
-    texts = [
-        "How are you doing?" for _ in range(16)
-    ]
-    # checkpoint_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/validation/fuji-7B-v2-4l/step_00022794"
     # config_name = "fuji-7B-v2"
-    # config_name = "fuji-7Bfsdp16tp4-v2",
-    # checkpoint_path = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/test_training/250108230120/axlearn_out/checkpoints/step_00000022"
     # checkpoint_path = "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000"
     # run_inference(texts, config_name, checkpoint_path)
     # generate(texts, config_name, checkpoint_path)
 
-    # Llama to Axlearn 7B GPU true model 
+    # Llama to Axlearn 7B GPU true model
     # validate_conversion(
     #     "fuji-7B-v2",
     #     "Llama-2-7b-hf",
@@ -553,52 +492,6 @@ if __name__ == "__main__":
     #     use_gqa=False,
     # )
 
-    # Axlearn to Llama 7B TRN dummy model
-    # validate_conversion(
-    #     "fuji-7B-v2",
-    #     "Llama-2-7b-hf",
-    #     load_true_model=True,
-    #     reverse=True,
-    #     texts=texts,
-    #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/validation/fuji-7B-v2-4l/step_00022794",
-    #     trn_checkpoint=True,
-    #     use_gqa=False,
-    # )
-
-    validate_conversion_trn(
-        "fuji-7B-v2",
-        texts, 
-        fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/validation/fuji-7B-v2-4l/step_00022794",
-    )
-    # set up is not needed in single node
-    # launch.setup()
-    # validate_conversion(
-    #     "fuji-7B-v2",
-    #     # "fuji-7Bfsdp16tp4-v2",
-    #     "Llama-2-7b-hf",
-    #     load_true_model=True,
-    #     reverse=True,
-    #     texts=texts,
-    #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/validation/fuji-7B-v2-4l/step_00022794",
-    #     # fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/test_training/250108230119/axlearn_out/checkpoints/step_00000022",
-    #     trn_checkpoint=True,
-    #     use_gqa=False,
-    # )
-
-    # Axlearn to Llama 70B TRN dummy model
-	# File "/fsx/czhenguo/Projects/fruitstand/axlearn/axlearn/common/flash_attention/layer.py", line 133, in _backend
-    # if len(global_mesh.devices):
-	# TypeError: len() of unsized object
-    # validate_conversion(
-    #     "fuji-70B-v2",
-    #     "Llama-2-70b-hf",
-    #     load_true_model=False,
-    #     reverse=True,
-    #     texts=texts,
-    #     trn_checkpoint=True,
-    #     use_gqa=True,
-    # )
-
     # Axlearn to Llama 7B GPU true model
     # validate_conversion(
     #     "fuji-7B-v2",
@@ -610,6 +503,26 @@ if __name__ == "__main__":
     #     trn_checkpoint=False,
     #     use_gqa=False,
     # )
+
+    texts = extend_texts(texts, 16)
+    validate_conversion_trn(
+        "fuji-7B-v2",
+        texts,
+        "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/validation/fuji-7B-v2-4l/step_00022794",
+    )
+
+    # Axlearn to Llama 7B TRN 4L true model
+    validate_conversion(
+        "fuji-7B-v2",
+        "Llama-2-7b-hf",
+        load_true_model=True,
+        reverse=True,
+        texts=texts,
+        # fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000",
+        fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/validation/fuji-7B-v2-4l/step_00022794",
+        trn_checkpoint=True,
+        use_gqa=False,
+    )
 
     # Axlearn to Llama 70B GPU true model
     # validate_conversion(
@@ -643,17 +556,6 @@ if __name__ == "__main__":
     #     use_gqa=True,
     # )
 
-    # Axlearn to Llama 7B TRN true model
-    # validate_conversion(
-    #     "fuji-7B-v2",
-    #     "Llama-2-7b-hf",
-    #     load_true_model=False,
-    #     reverse=True,
-    #     texts=texts,
-    #     trn_checkpoint=True,
-    #     use_gqa=False,
-    # )
-
     # Axlearn to Llama 70B TRN true model
     # validate_conversion(
     #     "fuji-70B-v2",
@@ -671,15 +573,8 @@ if __name__ == "__main__":
     #     "Llama-2-7b-hf",
     #     load_true_model=True,
     #     reverse=False,
+    #     save_name="Llama-2-7b-trn",
     #     trn_checkpoint=True,
-    #     use_gqa=False,
-    # )
-    # convert_and_save_checkpoint(
-    #     "fuji-7B-v2",
-    #     "Llama-2-7b-hf",
-    #     load_true_model=True,
-    #     reverse=False,
-    #     trn_checkpoint=False,
     #     use_gqa=False,
     # )
     # convert_and_save_checkpoint(
@@ -696,7 +591,17 @@ if __name__ == "__main__":
     #     "Llama-2-7b-hf",
     #     load_true_model=True,
     #     reverse=True,
-    #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000"
+    #     save_name="Llama-2-7b-hf",
+    #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/transformers_to_axlearn/Llama-2-7b-trn/step_00022794",
+    #     trn_checkpoint=True,
+    #     use_gqa=False,
+    # )
+    # convert_and_save_checkpoint(
+    #     "fuji-7B-v2",
+    #     "Llama-2-7b-hf",
+    #     load_true_model=True,
+    #     reverse=True,
+    #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000",
     #     save_name="baseline_34000",
     #     trn_checkpoint=False,
     #     use_gqa=False,

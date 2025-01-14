@@ -1,24 +1,24 @@
-import os
 import numbers
+import os
+import shutil
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from typing import Any, Callable, NamedTuple, Optional, TypeVar, Union
 
 import jax
 import numpy as np
-# import torch
+import torch
 from jax import numpy as jnp
 from transformers import AutoConfig, LlamaForCausalLM
-from axlearn.common import config, evaler, input_tf_data, measurement, utils
 
+from axlearn.common import config, evaler, input_tf_data, measurement, utils
 from axlearn.common.checkpointer import Checkpointer, CheckpointValidationType
 from axlearn.common.decoder import LmHead
-from axlearn.common.trainer import select_mesh_config
-from axlearn.experiments.text.gpt import c4_trainer
 from axlearn.common.inference import InferenceRunner, _InferenceRunnerState
+from axlearn.common.trainer import select_mesh_config
 from axlearn.common.utils import PartitionSpec, TensorSpec, MeshShape, infer_mesh_shape
 from axlearn.experiments import get_named_trainer_config
-
+from axlearn.experiments.text.gpt import c4_trainer
 
 seed = 123
 backend = jax.default_backend()
@@ -31,7 +31,9 @@ def get_trainer_config(config_name):
     trainer_config = trainer_config_fn()
 
     # Enable forward pass to return logits and loss
-    trainer_config.evalers["validation"].metric_calculator = trainer_config.evalers["validation"].metric_calculator.set(model_method_kwargs={"return_aux": True})
+    trainer_config.evalers["validation"].metric_calculator = trainer_config.evalers[
+        "validation"
+    ].metric_calculator.set(model_method_kwargs={"return_aux": True})
 
     if backend == "neuron":
         mesh_selector = "neuron-trn2.48xlarge-64"
@@ -47,7 +49,6 @@ def get_trainer_config(config_name):
         trainer_config.mesh_shape = infer_mesh_shape(trainer_config.mesh_shape)
 
     return trainer_config
-
 
 
 def get_mesh(trainer_config):
@@ -89,17 +90,17 @@ def load_checkpoint(trainer_config, checkpoint_path, step=None):
       - gda
           - decoder
     to keep them consitent, wrap model state in a _InferenceRunnerState
+
+    To load a model only checkpoint folder, can do the following
+
+    checkpointer = get_checkpointer(checkpoint_path)
+    prng_key = jax.random.PRNGKey(seed)
+    state = model.initialize_parameters_recursively(prng_key=prng_key)
+    step, state = checkpointer.restore(state=state, step=step)
     """
-    # checkpointer = get_checkpointer(checkpoint_path)
     inference_runner, _ = init_infer_runner(trainer_config, checkpoint_path)
     model_state = inference_runner._inference_runner_state.model
     return model_state
-
-    # prng_key = jax.random.PRNGKey(seed)
-    # state = model.initialize_parameters_recursively(prng_key=prng_key)
-    # step, state = checkpointer.restore(state=state, step=step)
-
-    # return state
 
 
 def save_axlearn_checkpoint(model, state, checkpoint_path, mesh):
@@ -118,12 +119,38 @@ def save_transformers_checkpoint(model, checkpoint_path):
     model.save_pretrained(checkpoint_path)
 
 
-def copy_tokenizer_files(src, dst):
-    for file_name in os.listdir():
-        src_file = os.path.join(src, file_name)
-        dst_file = os.path.join(dst, file_name)
-        shutil.copy(src_file, dst_file)
-        print(f"Copied {src_file} to {dst_file}")
+converted_tokenizer_path = "fuji_tokenizer"
+
+
+def convert_tokenizer(
+    sentencepiece_model_path="axlearn/data/tokenizers/sentencepiece/bpe_32k_c4.model",
+):
+    if os.path.isdir(converted_tokenizer_path):
+        return
+
+    tokenizer = LlamaTokenizer.from_pretrained(
+        sentencepiece_tokenizer_path,
+        bos_token="</s>",
+        eos_token="</s>",
+        pad_token="<pad>",
+        unk_token="<unk>",
+        use_fast=False,
+        add_bos_token=True,
+    )
+    tokenizer.save_pretrained(converted_tokenizer_path)
+
+
+def copy_files(llama_model_name, checkpoint_path):
+    for file_name in os.listdir(converted_tokenizer_path):
+        shutil.copyfile(
+            os.path.join(converted_tokenizer_path, file_name),
+            os.path.join(checkpoint_path, file_name),
+        )
+
+    shutil.copyfile(
+        os.path.join(llama_model_name, "generation_config.json"),
+        os.path.join(checkpoint_path, "generation_config.json"),
+    )
 
 
 def jax_to_torch(jax_tensor):
@@ -184,7 +211,7 @@ def as_torch_tensor(x: Any):
     raise NotImplementedError(f"{type(x)}: {x}")
 
 
-def transformers_rope_to_axlearn_rope(vector):
+def transformers_rope_to_axlearn_rope(vector: torch.Tensor) -> torch.Tensor:
     """Permutes q and k vector because transformers package has a different implementation of RoPE.
 
     The revert operation of the following:
@@ -203,7 +230,7 @@ def axlearn_rope_to_transformers_rope(vector: jax.Array) -> jax.Array:
 
 
 def parameters_from_llama(
-    llama, state: dict, use_gqa=False, trn_checkpoint=False
+    llama: LlamaForCausalLM, state: dict, use_gqa=False, trn_checkpoint=False
 ) -> dict:
     """Converts llama weights from huggingface model to fuji state.
     Conversion for llama2 and llama3 would be different. For example 7B model does not use GQA,
@@ -226,7 +253,7 @@ def parameters_from_llama(
         return _parameters_from_llama(llama, state, use_gqa)
 
 
-def _parameters_from_llama(llama, state: dict, use_gqa=False) -> dict:
+def _parameters_from_llama(llama: LlamaForCausalLM, state: dict, use_gqa=False) -> dict:
     """Convert llama model weight to fuji model weight.
 
     Conversion for checkpoint trained in TRN and GPU are different since TRN replaced
@@ -319,7 +346,7 @@ def _parameters_from_llama(llama, state: dict, use_gqa=False) -> dict:
     return as_jax_tensor(state)
 
 
-def _parameters_from_llama_trn(llama, state: dict, use_gqa=False) -> dict:
+def _parameters_from_llama_trn(llama: LlamaForCausalLM, state: dict, use_gqa=False) -> dict:
     # Copy the nested dict. No need to deep copy the data since it will be replaced.
     state = jax.tree.map(lambda x: x, state)
     if "lm_head" in state["decoder"]:
@@ -356,17 +383,23 @@ def _parameters_from_llama_trn(llama, state: dict, use_gqa=False) -> dict:
                 "i_proj"
             ]["q_proj"]["weight"] = transformers_rope_to_axlearn_rope(
                 layer.self_attn.q_proj.weight.reshape(-1, i_shape[-1], i_shape[-3])
-            ).permute(2, 0, 1)
+            ).permute(
+                2, 0, 1
+            )
             state["decoder"]["transformer"][f"layer{idx}"]["self_attention"]["attention"]["i_proj"][
                 "i_proj"
             ]["k_proj"]["weight"] = transformers_rope_to_axlearn_rope(
                 layer.self_attn.k_proj.weight.reshape(-1, i_shape[-1], i_shape[-3])
-            ).permute(2, 0, 1)
+            ).permute(
+                2, 0, 1
+            )
             state["decoder"]["transformer"][f"layer{idx}"]["self_attention"]["attention"]["i_proj"][
                 "i_proj"
             ]["v_proj"]["weight"] = layer.self_attn.v_proj.weight.reshape(
                 -1, i_shape[-1], i_shape[-3]
-            ).permute(2, 0, 1)
+            ).permute(
+                2, 0, 1
+            )
         else:
             i_shape = state["decoder"]["transformer"]["layer0"]["self_attention"]["attention"][
                 "i_proj"
@@ -644,23 +677,18 @@ def get_fuji_and_llama(
     llama_model_path = llama_model_path or llama_model_name
 
     # Llama-2-7b-hf vs fuji-7B-v2
-    # trainer_config_map = c4_trainer.named_trainer_configs()
-    # trainer_config_fn = trainer_config_map[fuji_model_name]
-    # trainer_config = trainer_config_fn()
-    trainer_config = get_trainer_config(fuji_model_name)
+    trainer_config_map = c4_trainer.named_trainer_configs()
+    trainer_config_fn = trainer_config_map[fuji_model_name]
+    trainer_config = trainer_config_fn()
     model_config = trainer_config.model
     model_config.set(name="model")
 
     if reverse:
-        # TODO remove the line below
-        # model_config.decoder.set(lm_head=LmHead.default_config())
-
         # initialize fuji model
         if load_true_model:
             if fuji_model_path is None:
                 raise Exception("fuji_model_path not provided!")
-            print("loading model...")
-            # state = load_checkpoint(trainer_config, fuji_model_path)
+
             infer_runner, infer_runner_config = init_infer_runner(trainer_config, fuji_model_path)
             fuji = infer_runner.model
             state = infer_runner._inference_runner_state.model
@@ -669,26 +697,20 @@ def get_fuji_and_llama(
             prng_key = jax.random.PRNGKey(0)
             # this does not take care of mesh, so will only work with reduced layer numbers
             state = fuji.initialize_parameters_recursively(prng_key=prng_key)
-            # infer_runner, infer_runner_config = init_infer_runner(trainer_config, fuji_model_path)
-            # fuji = infer_runner.model
-            # state = infer_runner._inference_runner_state.model
 
         # initialize llama model
-        # config = AutoConfig.from_pretrained(
-        #     f"{llama_model_name}_config.json",
-        #     local_files_only=True,
-        # )
-        # config.num_hidden_layers = model_config.decoder.transformer.num_layers
-        # config.vocab_size = model_config.decoder.vocab_size
-        # config.eos_token_id = model_config.decoder.eos_token_id
-        # config.bos_token_id = -1
-        # llama = LlamaForCausalLM._from_config(config)
-        llama = None
-        # llama = llama.eval()
+        config = AutoConfig.from_pretrained(
+            f"{llama_model_name}_config.json",
+            local_files_only=True,
+        )
+        config.num_hidden_layers = model_config.decoder.transformer.num_layers
+        config.vocab_size = model_config.decoder.vocab_size
+        config.eos_token_id = model_config.decoder.eos_token_id
+        config.bos_token_id = -1
+        llama = LlamaForCausalLM._from_config(config)
     else:
         # initialize transformer model
         if load_true_model:
-            # load model to a different device to avoid OOM
             llama = LlamaForCausalLM.from_pretrained(llama_model_name, local_files_only=True)
         else:
             # self-specify smaller config for easier validation
@@ -702,22 +724,29 @@ def get_fuji_and_llama(
         # adjust num_layers to match the value in {llama_model_name}_config.json
         model_config.decoder.transformer.set(num_layers=llama.config.num_hidden_layers)
         # fuji model has different vocab size even for the same model size
-        # model_config.decoder.set(vocab_size=llama.config.vocab_size)
+        model_config.decoder.set(vocab_size=llama.config.vocab_size)
 
         if fuji_model_name == "fuji-7B-v2":
             # llama2 7B does not share lm_head with embedding, but fuji does
             # need to disable lm_head sharing for fuji to match llama
-            # model_config.decoder.set(lm_head=None)
-            # model_config.decoder.set(lm_head=LmHead.default_config())
-            pass
+            model_config.decoder.set(lm_head=LmHead.default_config())
 
         # initialize fuji model
         fuji = model_config.instantiate(parent=None)
         prng_key = jax.random.PRNGKey(0)
         state = fuji.initialize_parameters_recursively(prng_key=prng_key)
 
-    # TODO can we assign and get state from fuji model so that only return models
     return fuji, state, llama
+
+
+def generate_random_init_checkpoint(fuji_model_name, checkpoint_path):
+    prng_key = jax.random.PRNGKey(0)
+    trainer_config = get_trainer_config(fuji_model_name)
+    model_config = trainer_config.model
+    model_config.set(name="model")
+    fuji = model_config.instantiate(parent=None)
+    state = fuji.initialize_parameters_recursively(prng_key=prng_key)
+    save_axlearn_checkpoint(fuji, state, checkpoint_path, get_mesh(trainer_config))
 
 
 def validate_weights(fuji_model_name, llama_model_name, load_true_model=False, reverse=False):
@@ -759,5 +788,10 @@ def run_all_tests():
 if __name__ == "__main__":
     # validate_weights("fuji-7B-v2", "Llama-2-7b-hf")
     # validate_weights("fuji-7B-v2", "Llama-2-7b-hf", load_true_model=True)
-    validate_weights("fuji-7B-v2", "Llama-2-7b-hf", reverse=True)
+    # validate_weights("fuji-7B-v2", "Llama-2-7b-hf", reverse=True)
     # validate_weights("fuji-1B-v3", "Llama-3.2-1B")
+    # copy_files("Llama-2-7b-hf", "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/baseline_34000/")
+    generate_random_init_checkpoint(
+        "fuji-7B-v2",
+        "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/validation/fuji-7B-v2-4l",
+    )
