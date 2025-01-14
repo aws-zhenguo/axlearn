@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
-MASTER_ADDR="ip-10-0-2-209"
+nodes=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
+MASTER_ADDR=$(echo "$nodes" | head -n 1)
+# MASTER_ADDR="ip-10-0-2-209"
 MASTER_PORT=41000
 # Added
 export NEURON_RT_ROOT_COMM_ID="${MASTER_ADDR}:${MASTER_PORT}"
@@ -37,8 +39,8 @@ export NEURON_WHILE_LOOP_UNROLL=1
 export TRN2=1
 export NEURON_RUN_TRIVIAL_COMPUTATION_ON_CPU=1
 export NEURON_RT_ENABLE_INTERNODE_EXECUTION_BARRIER=1
-# Added
-export NEURON_ALL_REDUCE_UPCASTER=1
+# disable to use FB32
+# export NEURON_ALL_REDUCE_UPCASTER=1
 # Neuron collectives flag
 export FI_LOG_LEVEL="warn"
 export OFI_NCCL_PROTOCOL=RDMA
@@ -91,6 +93,7 @@ DATA_DIR="gs://axlearn-public/tensorflow_datasets"
 # export NEURON_RT_LOG_LEVEL=DEBUG
 # export NEURON_RT_LOG_LOCATION=CONSOLE
 # export NCCL_DEBUG=INFO
+echo "NEURON_RT_ROOT_COMM_ID: $NEURON_RT_ROOT_COMM_ID"
 
 export DATA_DIR="gs://axlearn-public/tensorflow_datasets"
 # python axlearn_inference.py --jax_backend=neuron --module="" --config="" --trainer_dir=""
