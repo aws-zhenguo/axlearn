@@ -18,6 +18,7 @@ from axlearn.common.module import functional
 from axlearn.experiments.text.common import vocab
 from axlearn.experiments.text.gpt import c4_trainer
 from utils import (
+    backend,
     copy_files,
     get_fuji_and_llama,
     get_mesh,
@@ -225,7 +226,7 @@ def validate_conversion(
     np.save(f"{llama_model_name}_probs", llama_probs)
 
 
-def validate_conversion_trn(
+def run_forward_pass(
     fuji_model_name,
     texts,
     fuji_model_path,
@@ -272,11 +273,17 @@ def validate_conversion_trn(
 
         prng_key = jax.random.PRNGKey(seed)
         input_batch = {"input_ids": jnp.asarray(ids), "target_labels": jnp.asarray(target_ids)}
-        global_input_batch = utils.host_to_global_device_array(
-            input_batch,
-            partition=trainer_config.input_partition_type,
-            batch_axis_names=trainer_config.batch_axis_names,
-        )
+        if backend == "neuron":
+            global_input_batch = utils.host_to_global_device_array(
+                input_batch,
+                partition=trainer_config.input_partition_type,
+                batch_axis_names=trainer_config.batch_axis_names,
+            )
+        else:
+            global_input_batch = utils.host_to_global_device_array(
+                input_batch,
+                partition=infer_runner_config.input_batch_partition_spec
+            )
         # model param not actually used in ModelSummaryAccumulator
         metric_calculator_state = evaler.metric_calculator.init_state(
             prng_key=prng_key, model_params=state
@@ -292,10 +299,11 @@ def validate_conversion_trn(
         fuji_logits = np.asarray(fuji_outputs["logits"])
         fuji_probs = np.asarray(jax.nn.softmax(fuji_logits))
 
-    np.save(f"{fuji_model_name}_trn_probs", fuji_probs)
+    np.save(f"{fuji_model_name}_probs", fuji_probs)
     print(fuji_probs[0][0])
     assert isinstance(fuji_logits.dtype, np.dtypes.Float32DType)
     assert isinstance(fuji_probs.dtype, np.dtypes.Float32DType)
+    return fuji_probs
 
 
 def convert_and_save_checkpoint(
@@ -505,24 +513,24 @@ if __name__ == "__main__":
     # )
 
     texts = extend_texts(texts, 16)
-    validate_conversion_trn(
+    run_forward_pass(
         "fuji-7B-v2",
         texts,
         "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/validation/fuji-7B-v2-4l/step_00022794",
     )
 
     # Axlearn to Llama 7B TRN 4L true model
-    validate_conversion(
-        "fuji-7B-v2",
-        "Llama-2-7b-hf",
-        load_true_model=True,
-        reverse=True,
-        texts=texts,
-        # fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000",
-        fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/validation/fuji-7B-v2-4l/step_00022794",
-        trn_checkpoint=True,
-        use_gqa=False,
-    )
+    # validate_conversion(
+    #     "fuji-7B-v2",
+    #     "Llama-2-7b-hf",
+    #     load_true_model=True,
+    #     reverse=True,
+    #     texts=texts,
+    #     # fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/baselines/10976/axlearn_out/checkpoints/step_00034000",
+    #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/validation/fuji-7B-v2-4l/step_00022794",
+    #     trn_checkpoint=True,
+    #     use_gqa=False,
+    # )
 
     # Axlearn to Llama 70B GPU true model
     # validate_conversion(
@@ -579,15 +587,6 @@ if __name__ == "__main__":
     # )
     # convert_and_save_checkpoint(
     #     "fuji-7B-v2",
-    #     "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/baseline_34000",
-    #     load_true_model=True,
-    #     reverse=False,
-    #     save_name="round_trip",
-    #     trn_checkpoint=False,
-    #     use_gqa=False,
-    # )
-    # convert_and_save_checkpoint(
-    #     "fuji-7B-v2",
     #     "Llama-2-7b-hf",
     #     load_true_model=True,
     #     reverse=True,
@@ -608,6 +607,15 @@ if __name__ == "__main__":
     # )
     # convert_and_save_checkpoint(
     #     "fuji-7B-v2",
+    #     "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_to_transformers/baseline_34000",
+    #     load_true_model=True,
+    #     reverse=False,
+    #     save_name="round_trip",
+    #     trn_checkpoint=False,
+    #     use_gqa=False,
+    # )
+    # convert_and_save_checkpoint(
+    #     "fuji-7B-v2",
     #     "Llama-2-7b-hf",
     #     load_true_model=False,
     #     reverse=True,
@@ -623,5 +631,14 @@ if __name__ == "__main__":
     #     fuji_model_path="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/241230232345/axlearn_out/checkpoints/step_00000002",
     #     save_name="trn_70B",
     #     trn_checkpoint=True,
+    #     use_gqa=True,
+    # )
+    # convert_and_save_checkpoint(
+    #     "fuji-70B-v2",
+    #     "Llama-2-70b-hf",
+    #     load_true_model=True,
+    #     reverse=False,
+    #     save_name="Llama-2-70b-hf-gpu",
+    #     trn_checkpoint=False,
     #     use_gqa=True,
     # )
