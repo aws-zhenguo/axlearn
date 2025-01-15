@@ -253,6 +253,7 @@ def run_forward_pass(
 
     trainer_config = get_trainer_config(fuji_model_name)
     trainer_config.dir = "runs/artifacts/validate_trn/axlearn_out/"
+    trainer_config.evalers["validation"] = trainer_config.evalers["validation"].set(eval_dtype=jnp.float32)
     trainer_config.evalers["validation"].metric_calculator = trainer_config.evalers[
         "validation"
     ].metric_calculator.set(model_method_kwargs={"return_aux": True})
