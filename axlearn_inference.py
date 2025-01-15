@@ -283,7 +283,9 @@ def run_forward_pass(
         else:
             global_input_batch = utils.host_to_global_device_array(
                 input_batch,
-                partition=infer_runner_config.input_batch_partition_spec
+                # partition=infer_runner_config.input_batch_partition_spec
+                partition=trainer_config.input_partition_type,
+                batch_axis_names=trainer_config.batch_axis_names,
             )
         # model param not actually used in ModelSummaryAccumulator
         metric_calculator_state = evaler.metric_calculator.init_state(
