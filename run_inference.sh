@@ -9,6 +9,9 @@ export NEURON_RT_ROOT_COMM_ID="${MASTER_ADDR}:${MASTER_PORT}"
 sudo dpkg -i /fsx/apoorvgu/aws-neuronx-runtime-lib-2.x.19993.0-1bf746e12.deb
 sudo dpkg -i /fsx/apoorvgu/aws-neuronx-collectives-2.x.21370.0-8cbb4877b.deb
 sudo dpkg -i /fsx/apoorvgu/axlearn/aws-neuronx-dkms_2.x.3951.0_amd64.deb
+# sudo dpkg -i /fsx/czhenguo/Projects/fruitstand/libraries/apt/aws-neuronx-runtime-lib-2.x.20528.0-36aca8f85.deb
+# sudo dpkg -i /fsx/czhenguo/Projects/fruitstand/libraries/apt/aws-neuronx-collectives-2.x.21930.0-b27b67e79.deb
+# sudo dpkg -i /fsx/czhenguo/Projects/fruitstand/libraries/apt/aws-neuronx-dkms_2.x.4125.0_amd64.deb
 
 JOB_ID=2025010901
 ARTIFACTS_PATH="/fsx/czhenguo/Projects/fruitstand/runs/artifacts/"
@@ -72,21 +75,29 @@ export ENABLE_NEW_UNSHARDED_ATTN_KERNEL=1
 # export TF_CPP_MIN_LOG_LEVEL=0 # Enable verbose logging - 0 means most verbose
 # export TF_CPP_MAX_VLOG_LEVEL=3 # Required with the above, but in reverse
 
+echo "Listing apt dependencies"
+apt list --installed | grep neuron
+echo "Listing pip dependencies"
+pip list | grep neuron
+echo "Done listing dependencies"
+printenv | grep NEURON
+printenv | grep XLA
 
-# LIBTCMALLOC=$(find /usr/lib/x86_64-linux-gnu -name "libtcmalloc.so.*" | sort -V | tail -n 1)
-#  
-# if [ -n "$LIBTCMALLOC" ]; then
-#     # Create a symbolic link to the found libtcmalloc version
-#     sudo ln -sf "$LIBTCMALLOC" /usr/lib/libtcmalloc.so
-#     echo "Symbolic link created: /usr/lib/libtcmalloc.so -> $LIBTCMALLOC"
-#  
-#     # Export LD_PRELOAD
-#     export LD_PRELOAD=/usr/lib/libtcmalloc.so
-#     echo "LD_PRELOAD set to: $LD_PRELOAD"
-# else
-#     echo "Error: libtcmalloc.so not found"
-#     exit 1
-# fi
+LIBTCMALLOC=$(find /usr/lib/x86_64-linux-gnu -name "libtcmalloc.so.*" | sort -V | tail -n 1)
+
+if [ -n "$LIBTCMALLOC" ]; then
+    # Create a symbolic link to the found libtcmalloc version
+    sudo ln -sf "$LIBTCMALLOC" /usr/lib/libtcmalloc.so
+    echo "Symbolic link created: /usr/lib/libtcmalloc.so -> $LIBTCMALLOC"
+
+    # Export LD_PRELOAD
+    export LD_PRELOAD=/usr/lib/libtcmalloc.so
+    echo "LD_PRELOAD set to: $LD_PRELOAD"
+else
+    echo "Error: libtcmalloc.so not found"
+    exit 1
+fi
+
 OUTPUT_DIR="${TEST_ARTIFACTS_PATH}/axlearn_out"
 mkdir -p ${OUTPUT_DIR}
 DATA_DIR="gs://axlearn-public/tensorflow_datasets"
@@ -97,7 +108,7 @@ echo "NEURON_RT_ROOT_COMM_ID: $NEURON_RT_ROOT_COMM_ID"
 
 export DATA_DIR="gs://axlearn-public/tensorflow_datasets"
 # python axlearn_inference.py --jax_backend=neuron --module="" --config="" --trainer_dir=""
-python axlearn_inference.py --jax_backend=neuron --module=text.gpt.c4_trainer --config=fuji-7Bfsdp16tp4-v2 --trainer_dir=$OUTPUT_DIR --data_dir=$DATA_DIR --mesh_selector=neuron-trn2.48xlarge-64
+python axlearn_inference.py --jax_backend=neuron
 # python axlearn_inference.py
 # python axlearn_train.py --jax_backend=neuron --module=text.gpt.c4_trainer --config=fuji-7Bfsdp16tp4-v2 --trainer_dir=$OUTPUT_DIR --data_dir=$DATA_DIR --mesh_selector=neuron-trn2.48xlarge-64
 # python -m axlearn.common.launch_trainer_main \
