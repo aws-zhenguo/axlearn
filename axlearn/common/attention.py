@@ -3211,6 +3211,7 @@ class TransformerLayer(BaseTransformerLayer):
             assert mode == ForwardMode.INIT_STATES
             return dict(self_attention=self_atten_state), self_atten_outputs
 
+        # self_atten_outputs
         data = self_atten_outputs.data
         self.vlog(3, "self_attention.output=%s", data.sum())
         if cross_attention_data is not None:
@@ -3746,7 +3747,7 @@ class StackedTransformerLayer(BaseStackedTransformerLayer):
             data = layer_outputs.data
 
         outputs = None if cache_init else self._aggregate_layer_outputs(all_layer_outputs)
-        return all_layer_states, outputs
+        return all_layer_outputs, outputs
 
     def init_states(
         self,
@@ -3786,6 +3787,7 @@ class StackedTransformerLayer(BaseStackedTransformerLayer):
         layer_outputs: Sequence[BaseTransformerLayer.Output],
     ) -> BaseTransformerLayer.Output:
         """Aggregates outputs from the stack."""
+        # only keep the output from last layer
         data = layer_outputs[-1].data
         self_attention_kv_state = layer_outputs[-1].self_attention_kv_state
         aux_outputs = [
@@ -3800,13 +3802,13 @@ class StackedTransformerLayer(BaseStackedTransformerLayer):
         data: Tensor,
         **layer_kwargs,
     ) -> TransformerLayer.Output:
-        _, output = self._forward_for_mode(
+        all_layer_outputs, output = self._forward_for_mode(
             mode=ForwardMode.FORWARD,
             data=data,
             cached_states=None,
             **layer_kwargs,
         )
-        return output
+        return all_layer_outputs, output
 
     def extend_step(
         self,

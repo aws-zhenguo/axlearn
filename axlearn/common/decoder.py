@@ -503,17 +503,25 @@ class Decoder(BaseLayer):
         emb_batch = {**input_batch}
         emb_batch["inputs"] = emb_batch["input_ids"]
         x = self.emb(input_batch=emb_batch)
+        emb_output = x.copy()
 
         if mode == ForwardMode.FORWARD:
-            transformer_state, x = (
-                None,
-                self.transformer(
-                    x,
-                    self_attention_logit_biases=self_attention_logit_biases,
-                    target_segment_ids=input_segment_ids,
-                    cross_attention_data=cross_attention_data,
-                    cross_attention_logit_biases=cross_attention_logit_biases,
-                ),
+            # transformer_state, x = (
+            #     None,
+            #     self.transformer(
+            #         x,
+            #         self_attention_logit_biases=self_attention_logit_biases,
+            #         target_segment_ids=input_segment_ids,
+            #         cross_attention_data=cross_attention_data,
+            #         cross_attention_logit_biases=cross_attention_logit_biases,
+            #     ),
+            # )
+            transformer_state, x = self.transformer(
+                x,
+                self_attention_logit_biases=self_attention_logit_biases,
+                target_segment_ids=input_segment_ids,
+                cross_attention_data=cross_attention_data,
+                cross_attention_logit_biases=cross_attention_logit_biases,
             )
         elif mode == ForwardMode.INIT_STATES:
             assert cached_states is not None
@@ -554,7 +562,8 @@ class Decoder(BaseLayer):
                 logits = self.emb.attend(x)
         logits = with_sharding_constraint(logits, PartitionSpec(*self.config.logits_partition_spec))
         # TODO(markblee): Rename to just "transformer". "transformer_state" is a bit redundant.
-        return dict(transformer_state=transformer_state), dict(logits=logits, hidden_states=x)
+        # transformer_state -> all_layer_outputs
+        return dict(transformer_state=transformer_state), dict(logits=logits, hidden_states=x, emb_output=emb_output, all_layer_outputs=transformer_state, emb_input=emb_batch)
 
     def forward(
         self,

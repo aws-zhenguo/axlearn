@@ -2,6 +2,7 @@ from collections import defaultdict
 
 import jax
 import numpy as np
+import os
 import seqio
 import tensorflow as tf
 import torch
@@ -145,6 +146,7 @@ def run_inference(texts, config_name, checkpoint_path):
 
 
 def get_sentence_piece_tokenizer():
+    os.environ["DATA_DIR"] = "gs://axlearn-public/tensorflow_datasets"
     vocab_cfg = config_for_function(vocab).set(
         sentencepiece_model_name=sentencepiece_model_name, num_extra_ids=None
     )
@@ -299,10 +301,19 @@ def run_forward_pass(
         )
 
         loss, fuji_outputs = forward_outputs["output"]
+        # import pdb; pdb.set_trace()
+        emb_output = np.asarray(fuji_outputs["emb_output"])
+        emb_input = np.asarray(fuji_outputs["emb_input"])
+        first_transformer_output = np.asarray(fuji_outputs['all_layer_outputs'][0].data)
+        print(emb_output)
+        print(first_transformer_output)
+        print(emb_input)
         fuji_logits = np.asarray(fuji_outputs["logits"])
         fuji_probs = np.asarray(jax.nn.softmax(fuji_logits))
 
     np.save(f"{fuji_model_name}_probs", fuji_probs)
+    np.save(f"{fuji_model_name}_first_transformer_output", first_transformer_output)
+    np.save(f"{fuji_model_name}_emb_output", emb_output)
     print(fuji_probs[0][0])
     assert isinstance(fuji_logits.dtype, np.dtypes.Float32DType)
     assert isinstance(fuji_probs.dtype, np.dtypes.Float32DType)
@@ -520,6 +531,7 @@ if __name__ == "__main__":
         "fuji-7B-v2",
         texts,
         "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/validation/fuji-7B-v2-4l/step_00022794",
+        # "/fsx/czhenguo/Projects/fruitstand/runs/artifacts/axlearn_venv/validation/fuji-7B-v2/step_00000020",
     )
 
     # Axlearn to Llama 7B TRN 4L true model

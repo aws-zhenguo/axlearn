@@ -261,7 +261,7 @@ def get_trainer_kwargs(
             max_sequence_length=max_sequence_length,
             train_batch_size=train_batch_size,
             eval_batch_size=16,
-            input_partition_type=None if backend != "neuron" else DataPartitionType.BATCH,
+            input_partition_type=DataPartitionType.BATCH,
             max_step=max_step,
             mesh_shape=mesh_shape_from_axes(data=-1, fsdp=8),
             mesh_rules=(
@@ -495,7 +495,8 @@ def get_trainer_kwargs(
         raise NotImplementedError(f"Unknown model size {model_size}.")
     model_kwargs = trainer_kwargs.pop("model_kwargs")
     model_kwargs.setdefault("vocab_size", vocab_size)
-    model_kwargs.setdefault("stack_cfg", None if backend != "neuron" else StackedTransformerLayer.default_config())
+    # model_kwargs.setdefault("stack_cfg", None if backend != "neuron" else StackedTransformerLayer.default_config())
+    model_kwargs.setdefault("stack_cfg", StackedTransformerLayer.default_config())
     trainer_kwargs["model_cfg"] = model_config(**model_kwargs)
     trainer_kwargs["learner_cfg"] = adamw_decoupled_learner_config(
         max_step=trainer_kwargs["max_step"],
@@ -548,7 +549,8 @@ def model_config(
         atten_cfg = GroupedQueryAttention.default_config()
         backend = jax.default_backend()
 
-        qkv_linear =  FusedGroupedQKVLinear if backend != "neuron" else GroupedQKVLinear
+        # qkv_linear =  FusedGroupedQKVLinear if backend != "neuron" else GroupedQKVLinear
+        qkv_linear =  GroupedQKVLinear
         atten_input_linear = qkv_linear.default_config().set(num_kv_heads=num_kv_heads)
     else:
         atten_cfg = MultiheadAttention.default_config()
