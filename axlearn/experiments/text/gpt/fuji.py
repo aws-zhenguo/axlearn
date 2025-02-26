@@ -539,7 +539,7 @@ def get_trainer_kwargs(
         )
     elif model_size == "70B":
         trainer_kwargs = dict(
-            save_every_n_steps=5,
+            save_every_n_steps=100,
             model_kwargs=dict(
                 num_layers=8,
                 hidden_dim=128 * 64,
