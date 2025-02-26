@@ -3,7 +3,7 @@
 devices_per_node=64
 num_nodes=1
 # MASTER_ADDR=$(echo "$nodes" | head -n 1)
-MASTER_ADDR="compute1-st-kaena-training-1-13"
+MASTER_ADDR="compute1-st-kaena-training-1-1"
 MASTER_PORT=41000
 JAX_COORDINATOR_PORT=41001
 export NEURON_RT_ROOT_COMM_ID="${MASTER_ADDR}:${MASTER_PORT}"
@@ -123,7 +123,7 @@ DATA_DIR="gs://axlearn-public/tensorflow_datasets"
 #     --jax_backend=neuron --mesh_selector=neuron-trn2.48xlarge-64 \
 #     --distributed_coordinator=$MASTER_ADDR:$JAX_COORDINATOR_PORT --num_processes=$num_nodes \
 #     --process_id=$NEURON_PJRT_PROCESS_INDEX
-pyinstrument -o recovery_pyinstrument.pyisession --hide-regex ".*traceback_util\.py" -m axlearn.common.launch_trainer_main \
+pyinstrument -o recovery_profiles/recovery_pyinstrument.pyisession --hide-regex ".*traceback_util\.py" -m axlearn.common.launch_trainer_main \
     --module=text.gpt.c4_trainer --config=fuji-70B-v2-flash \
     --trainer_dir=$OUTPUT_DIR --data_dir=$DATA_DIR \
     --jax_backend=neuron --mesh_selector=neuron-trn2.48xlarge-64 \

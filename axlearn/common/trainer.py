@@ -582,8 +582,6 @@ class SpmdTrainer(Module):
                     break
                     self.vlog(3, "Done step %s", self.step)
                     num_steps += 1
-                    # skip training
-                    break
                     if num_steps % 100 == 0:
                         now = time.perf_counter()
                         average_step_time = (now - start_time) / num_steps

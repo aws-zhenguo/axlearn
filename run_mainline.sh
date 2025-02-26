@@ -28,6 +28,7 @@ fi
 hostname
 
 JOB_ID=${SLURM_JOB_ID}
+# JOB_ID=1759
 ARTIFACTS_PATH="/shared/czhenguo/Projects/fruitstand/runs/artifacts"
 TEST_ARTIFACTS_PATH="${ARTIFACTS_PATH}/${JOB_ID}"
 mkdir -p "$TEST_ARTIFACTS_PATH"
@@ -115,9 +116,18 @@ OUTPUT_DIR="${TEST_ARTIFACTS_PATH}/axlearn_out"
 mkdir -p ${OUTPUT_DIR}
 DATA_DIR="gs://axlearn-public/tensorflow_datasets"
 
-python -m axlearn.common.launch_trainer_main \
-    --module=text.gpt.c4_trainer --config=fuji-70B-v2-flash \
-    --trainer_dir=$OUTPUT_DIR --data_dir=$DATA_DIR \
-    --jax_backend=neuron --mesh_selector=neuron-trn2.48xlarge-64 \
-    --distributed_coordinator=$MASTER_ADDR:$JAX_COORDINATOR_PORT --num_processes=$num_nodes \
-    --process_id=$NEURON_PJRT_PROCESS_INDEX
+if [ $NEURON_PJRT_PROCESS_INDEX == 0 ]; then
+    pyinstrument -o recovery_profiles/recovery_pyinstrument.pyisession --hide-regex ".*traceback_util\.py" -m axlearn.common.launch_trainer_main \
+        --module=text.gpt.c4_trainer --config=fuji-70B-v2-flash \
+        --trainer_dir=$OUTPUT_DIR --data_dir=$DATA_DIR \
+        --jax_backend=neuron --mesh_selector=neuron-trn2.48xlarge-64 \
+        --distributed_coordinator=$MASTER_ADDR:$JAX_COORDINATOR_PORT --num_processes=$num_nodes \
+        --process_id=$NEURON_PJRT_PROCESS_INDEX
+else
+    python -m axlearn.common.launch_trainer_main \
+        --module=text.gpt.c4_trainer --config=fuji-70B-v2-flash \
+        --trainer_dir=$OUTPUT_DIR --data_dir=$DATA_DIR \
+        --jax_backend=neuron --mesh_selector=neuron-trn2.48xlarge-64 \
+        --distributed_coordinator=$MASTER_ADDR:$JAX_COORDINATOR_PORT --num_processes=$num_nodes \
+        --process_id=$NEURON_PJRT_PROCESS_INDEX
+fi
