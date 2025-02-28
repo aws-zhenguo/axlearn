@@ -27,8 +27,9 @@ fi
 # Print nodenames for debug
 hostname
 
+# PAST_JOB_ID=${PAST_JOB_ID:-1840}
 JOB_ID=${SLURM_JOB_ID}
-# JOB_ID=1759
+# JOB_ID=${PAST_JOB_ID}
 ARTIFACTS_PATH="/shared/czhenguo/Projects/fruitstand/runs/artifacts"
 TEST_ARTIFACTS_PATH="${ARTIFACTS_PATH}/${JOB_ID}"
 mkdir -p "$TEST_ARTIFACTS_PATH"
@@ -115,9 +116,10 @@ fi
 OUTPUT_DIR="${TEST_ARTIFACTS_PATH}/axlearn_out"
 mkdir -p ${OUTPUT_DIR}
 DATA_DIR="gs://axlearn-public/tensorflow_datasets"
+PYINSTRUMENT_OUTPUT_PATH="recovery_profiles/recovery_pyinstrument_${num_nodes}.pyisession"
 
 if [ $NEURON_PJRT_PROCESS_INDEX == 0 ]; then
-    pyinstrument -o recovery_profiles/recovery_pyinstrument.pyisession --hide-regex ".*traceback_util\.py" -m axlearn.common.launch_trainer_main \
+    pyinstrument -o $PYINSTRUMENT_OUTPUT_PATH --hide-regex ".*traceback_util\.py" -m axlearn.common.launch_trainer_main \
         --module=text.gpt.c4_trainer --config=fuji-70B-v2-flash \
         --trainer_dir=$OUTPUT_DIR --data_dir=$DATA_DIR \
         --jax_backend=neuron --mesh_selector=neuron-trn2.48xlarge-64 \

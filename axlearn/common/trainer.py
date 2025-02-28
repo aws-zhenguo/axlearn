@@ -579,7 +579,7 @@ class SpmdTrainer(Module):
                         ),
                     )
                     # skip training
-                    break
+                    # break
                     self.vlog(3, "Done step %s", self.step)
                     num_steps += 1
                     if num_steps % 100 == 0:
@@ -589,7 +589,8 @@ class SpmdTrainer(Module):
                         self.summary_writer(self.step, {"average_step_time": average_step_time})
                         num_steps = 0
                         start_time = now
-                    if self.step >= cfg.max_step:
+                    # if self.step >= cfg.max_step:
+                    if self.step >= 101:
                         self._step_log("Reached max_step=%s. Stopping", cfg.max_step)
                         break
                 if self.step < cfg.max_step:

@@ -9,6 +9,7 @@ The fuji models are set up to imitate LLaMA models:
 * LLaMA 2: https://arxiv.org/abs/2307.09288
 * LLaMA 3: https://github.com/meta-llama/llama3
 """
+import os
 import jax
 import enum
 import functools
@@ -66,6 +67,9 @@ from axlearn.experiments.trainer_config_utils import TrainerConfigFn
 
 MODEL_SIZES = ("test", "1B", "3B", "7B", "8B", "70B")
 
+TP_DEGREE = os.environ.get("TP_DEGREE", 4)
+TRAIN_BATCH_SIZE = os.environ.get("TRAIN_BATCH_SIZE", 32)
+NUM_LAYERS = os.environ.get("NUM_LAYERS", 16)
 
 class Version(enum.Enum):
     V1 = 1
@@ -541,7 +545,7 @@ def get_trainer_kwargs(
         trainer_kwargs = dict(
             save_every_n_steps=100,
             model_kwargs=dict(
-                num_layers=8,
+                num_layers=NUM_LAYERS,
                 hidden_dim=128 * 64,
                 num_heads=64,
                 # No GQA support in V1 models, so num_kv_heads is the same as num_heads.
@@ -555,7 +559,7 @@ def get_trainer_kwargs(
             learner_kwargs=dict(peak_lr=1.5e-4, weight_decay=0.1),
             max_sequence_length=max_sequence_length,
             # train_batch_size=int(len(jax.devices())/4),
-            train_batch_size=16,
+            train_batch_size=TRAIN_BATCH_SIZE,
             max_step=max_step,
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
             mesh_rules=(
@@ -633,7 +637,7 @@ def get_trainer_kwargs(
                             MeshShapeModifier.default_config().set(
                                 # TP within the chip, FSDP across chips.
                                 # Each TRN2 chip has 4 XLA cores.
-                                mesh_shape=mesh_shape_from_axes(fsdp=-1, model=4)
+                                mesh_shape=mesh_shape_from_axes(fsdp=-1, model=TP_DEGREE)
                             ),
                             RematSpecModifier.default_config().set(
                                 remat_policies={
