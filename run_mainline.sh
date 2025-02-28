@@ -116,7 +116,7 @@ fi
 OUTPUT_DIR="${TEST_ARTIFACTS_PATH}/axlearn_out"
 mkdir -p ${OUTPUT_DIR}
 DATA_DIR="gs://axlearn-public/tensorflow_datasets"
-PYINSTRUMENT_OUTPUT_PATH="recovery_profiles/recovery_pyinstrument_${num_nodes}.pyisession"
+PYINSTRUMENT_OUTPUT_PATH="recovery_profiles/recovery_pyinstrument_${num_nodes}nodes.pyisession"
 
 if [ $NEURON_PJRT_PROCESS_INDEX == 0 ]; then
     pyinstrument -o $PYINSTRUMENT_OUTPUT_PATH --hide-regex ".*traceback_util\.py" -m axlearn.common.launch_trainer_main \
