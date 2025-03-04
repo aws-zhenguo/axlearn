@@ -578,8 +578,6 @@ class SpmdTrainer(Module):
                             force_run_eval_sets_at_max_step if self.step >= cfg.max_step else None
                         ),
                     )
-                    # skip training
-                    # break
                     self.vlog(3, "Done step %s", self.step)
                     num_steps += 1
                     if num_steps % 100 == 0:
@@ -589,8 +587,7 @@ class SpmdTrainer(Module):
                         self.summary_writer(self.step, {"average_step_time": average_step_time})
                         num_steps = 0
                         start_time = now
-                    # if self.step >= cfg.max_step:
-                    if self.step >= 101:
+                    if self.step >= cfg.max_step:
                         self._step_log("Reached max_step=%s. Stopping", cfg.max_step)
                         break
                 if self.step < cfg.max_step:
@@ -834,11 +831,7 @@ class SpmdTrainer(Module):
         cfg = self.config
 
         # Attempt to restore the latest checkpoint, which may contain a saved `_input_iter`.
-        import time
-        start = time.time()
         self.restore_checkpoint(restore_step=None)
-        end = time.time()
-        print("time for loading checkpoint:", end - start)
 
         if self.step is None:
             # If we didn't restore from checkpoint, attempt to build initial state according

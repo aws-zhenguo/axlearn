@@ -119,14 +119,14 @@ DATA_DIR="gs://axlearn-public/tensorflow_datasets"
 PYINSTRUMENT_OUTPUT_PATH="recovery_profiles/recovery_pyinstrument_${num_nodes}nodes.pyisession"
 
 if [ $NEURON_PJRT_PROCESS_INDEX == 0 ]; then
-    pyinstrument -o $PYINSTRUMENT_OUTPUT_PATH --hide-regex ".*traceback_util\.py" -m axlearn.common.launch_trainer_main \
+    pyinstrument -o $PYINSTRUMENT_OUTPUT_PATH --hide-regex ".*traceback_util\.py" -m axlearn.common.launch_trainer_config \
         --module=text.gpt.c4_trainer --config=fuji-70B-v2-flash \
         --trainer_dir=$OUTPUT_DIR --data_dir=$DATA_DIR \
         --jax_backend=neuron --mesh_selector=neuron-trn2.48xlarge-64 \
         --distributed_coordinator=$MASTER_ADDR:$JAX_COORDINATOR_PORT --num_processes=$num_nodes \
         --process_id=$NEURON_PJRT_PROCESS_INDEX
 else
-    python -m axlearn.common.launch_trainer_main \
+    python -m axlearn.common.launch_trainer_config \
         --module=text.gpt.c4_trainer --config=fuji-70B-v2-flash \
         --trainer_dir=$OUTPUT_DIR --data_dir=$DATA_DIR \
         --jax_backend=neuron --mesh_selector=neuron-trn2.48xlarge-64 \
