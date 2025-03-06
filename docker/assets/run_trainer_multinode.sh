@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-TEST_ARTIFACTS_PATH="/shared/czhenguo/Projects/fruitstand/run_artifacts/$POD_UID/"
+TEST_ARTIFACTS_PATH="/shared/czhenguo/Projects/fruitstand/run_artifacts/$OMPI_COMM_WORLD_SIZE/$POD_UID/"
 mkdir -p "$TEST_ARTIFACTS_PATH"
 NEURON_DUMP_PATH=${TEST_ARTIFACTS_PATH}/neuron_dump/$OMPI_COMM_WORLD_RANK
 HLO_DUMP_PATH=${TEST_ARTIFACTS_PATH}/hlo_dump
@@ -37,7 +37,7 @@ else
     exit 1
 fi
 
-PYINSTRUMENT_OUTPUT_PATH="${TEST_ARTIFACT_PATH}/recovery.pyisession"
+PYINSTRUMENT_OUTPUT_PATH=${TEST_ARTIFACTS_PATH}/recovery.pyisession
 
 # Sync changes
 git config --global --add safe.directory /shared/czhenguo/Projects/fruitstand/axlearn
@@ -48,6 +48,8 @@ cd /neuron/axlearn
 echo "applying patch"
 git apply /shared/czhenguo/Projects/fruitstand/axlearn/changes.patch
 cd /neuron
+
+NUM_NODES=$OMPI_COMM_WORLD_SIZE
 
 # show env vars in logs
 set
@@ -62,7 +64,7 @@ if [ $NEURON_PJRT_PROCESS_INDEX == 0 ]; then
         --num_processes=$OMPI_COMM_WORLD_SIZE \
         --process_id=$OMPI_COMM_WORLD_RANK 2>&1 | tee ${OUTPUT_DIR}/${PMIX_HOSTNAME}.log
 else
-    pyinstrument -o $PYINSTRUMENT_OUTPUT_PATH --hide-regex ".*traceback_util\.py" -m axlearn.common.launch_trainer_main \
+    python3 -m axlearn.common.launch_trainer_main \
         --module=text.gpt.c4_trainer --config=fuji-70B-v2-flash \
         --trainer_dir=$OUTPUT_DIR --data_dir=$DATA_DIR \
         --jax_backend=neuron --mesh_selector=neuron-trn2.48xlarge-64 \
