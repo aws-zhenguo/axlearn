@@ -88,10 +88,12 @@ RUN cd packages \
   && rm -fr /neuron/packages
 
 # Install axlearn
-RUN git clone https://github.com/apoorvtintin/axlearn.git -b do-not-merge-2 \
+RUN git clone https://github.com/aws-zhenguo/axlearn.git -b scale-out \
   && cd axlearn \
   && $PIP install -U pip \
   && $PIP install '.[core,dev]'
+
+RUN $PIP install pyinstrument
 
 # For testing, we often need to make some local changes to AXLearn fuji.py (batchsize, num_layers)
 # COPY ./axlearn /neuron/axlearn
