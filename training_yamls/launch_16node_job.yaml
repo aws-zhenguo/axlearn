@@ -45,6 +45,8 @@ spec:
              - TP_DEGREE
              - -x
              - NUM_LAYERS
+             - -x
+             - PROJECT_PATH
              - -wdir
              - /neuron/
              - /neuron/run_trainer_multinode.sh

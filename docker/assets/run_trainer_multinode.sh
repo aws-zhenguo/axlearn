@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 
-TEST_ARTIFACTS_PATH="/shared/czhenguo/Projects/fruitstand/run_artifacts/$OMPI_COMM_WORLD_SIZE/$POD_UID/"
+# Sync changes
+git config --global --add safe.directory $PROJECT_PATH/axlearn
+cd $PROJECT_PATH/axlearn
+git diff czhenguo/scale-out --no-color > changes.patch
+echo "patch generated"
+cd /neuron/axlearn
+echo "applying patch"
+git apply $PROJECT_PATH/axlearn/changes.patch
+cd /neuron
+
+TEST_ARTIFACTS_PATH="${PROJECT_PATH}/run_artifacts/$OMPI_COMM_WORLD_SIZE/$POD_UID/"
 mkdir -p "$TEST_ARTIFACTS_PATH"
 NEURON_DUMP_PATH=${TEST_ARTIFACTS_PATH}/neuron_dump/$OMPI_COMM_WORLD_RANK
 HLO_DUMP_PATH=${TEST_ARTIFACTS_PATH}/hlo_dump
@@ -38,16 +48,6 @@ else
 fi
 
 PYINSTRUMENT_OUTPUT_PATH=${TEST_ARTIFACTS_PATH}/recovery.pyisession
-
-# Sync changes
-git config --global --add safe.directory /shared/czhenguo/Projects/fruitstand/axlearn
-cd /shared/czhenguo/Projects/fruitstand/axlearn
-git diff czhenguo/scale-out --no-color > changes.patch
-echo "patch generated"
-cd /neuron/axlearn
-echo "applying patch"
-git apply /shared/czhenguo/Projects/fruitstand/axlearn/changes.patch
-cd /neuron
 
 # show env vars in logs
 set

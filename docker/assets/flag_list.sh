@@ -37,7 +37,7 @@ export FI_PROVIDER="efa"
 export FI_EFA_FORK_SAFE=1
 export OFI_NCCL_MR_CACHE_DISABLE=1
 
-export JAX_COMPILATION_CACHE_DIR="/shared/czhenguo/Projects/fruitstand/run_artifacts/cc_cache/"
+export JAX_COMPILATION_CACHE_DIR="${PROJECT_PATH}/run_artifacts/cc_cache/"
 mkdir -p $JAX_COMPILATION_CACHE_DIR
 
 # Neuron PJRT flags

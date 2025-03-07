@@ -107,3 +107,7 @@ COPY ./assets/flag_list.sh /neuron/
 
 RUN echo "export PATH=/opt/aws/neuron/bin:\$PATH" >> /root/.bashrc
 ENV PATH="${PATH}:/opt/aws/neuron/bin"
+
+# allow configurable path for different users
+ARG PROJECT_PATH_ARG
+ENV PROJECT_PATH=$PROJECT_PATH_ARG
