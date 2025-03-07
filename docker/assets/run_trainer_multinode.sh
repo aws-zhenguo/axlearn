@@ -49,8 +49,6 @@ echo "applying patch"
 git apply /shared/czhenguo/Projects/fruitstand/axlearn/changes.patch
 cd /neuron
 
-NUM_NODES=$OMPI_COMM_WORLD_SIZE
-
 # show env vars in logs
 set
 

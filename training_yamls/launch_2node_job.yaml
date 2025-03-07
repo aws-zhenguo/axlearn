@@ -39,6 +39,12 @@ spec:
              - slot
              - -x
              - POD_UID
+             - -x
+             - NUM_NODES
+             - -x
+             - TP_DEGREE
+             - -x
+             - NUM_LAYERS
              - -wdir
              - /neuron/
              - /neuron/run_trainer_multinode.sh
