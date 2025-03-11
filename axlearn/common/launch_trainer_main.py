@@ -33,15 +33,17 @@ print("NUM_NODES", NUM_NODES)
 print("TP_DEGREE", TP_DEGREE)
 print("NUM_LAYERS", NUM_LAYERS)
 print("TRAIN_BATCH_SIZE", TRAIN_BATCH_SIZE)
-            
-PROCESS_INDEX = os.environ['NEURON_PJRT_PROCESS_INDEX']
+
+PROCESS_INDEX = os.environ["NEURON_PJRT_PROCESS_INDEX"]
+
 
 def update_trainer_config(trainer_config):
     # config checkpointer
     existing_save_policy = trainer_config.checkpointer.save_policy
     trainer_config.checkpointer = MyOrbaxCheckpointer.default_config()
     trainer_config.checkpointer.keep_last_n = 100
-    trainer_config.checkpointer.keep_every_n_steps = 100000
+    # orbax checkpointer does not have keep_every_n_steps option
+    # trainer_config.checkpointer.set(keep_every_n_steps=100000)
     trainer_config.checkpointer.save_policy = existing_save_policy
     trainer_config.checkpointer.save_policy.set(n=10)
 
@@ -49,11 +51,12 @@ def update_trainer_config(trainer_config):
     trainer_config.model.decoder.transformer.set(num_layers=NUM_LAYERS)
     trainer_config.set(max_step=101)
     trainer_config.input.input_dispatcher.set(global_logical_batch_size=TRAIN_BATCH_SIZE)
-        
+
     # trainer_config.mesh_shape = mesh_shape_from_axes(data=1, fsdp=-1, model=4)
 
     return trainer_config
-        
+
+
 class MLFlowReporter:
     _mlflow_initialized = False
     _mlflow_run = None
@@ -69,36 +72,36 @@ class MLFlowReporter:
         """Initialize MLflow once for all instances."""
         with cls._lock:
             if not cls._mlflow_initialized:
-                mlflow.set_tracking_uri(os.environ.get('MLFLOW_TRACKING_URI'))
-                mlflow.set_experiment("scale_out_training_metrics")
-                
+                mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI"))
+                mlflow.set_experiment("scale_out_training_metrics_czhenguo")
+
                 # Generate run name
                 run_name = cls._generate_run_name()
-                
+
                 # Start run with generated name and store it at class level
                 cls._mlflow_run = mlflow.start_run(run_name=run_name)
-                
+
                 cls._mlflow_initialized = True
 
     @classmethod
     def _generate_run_name(cls):
         """Generate MLflow run name based on environment."""
-        if os.environ.get('POD_UID'):
+        if os.environ.get("POD_UID"):
             # Kubernetes environment
-            pod_uid = os.environ.get('POD_UID', '')
-            hostname = os.environ.get('PMIX_HOSTNAME', '')
+            pod_uid = os.environ.get("POD_UID", "")
+            hostname = os.environ.get("PMIX_HOSTNAME", "")
             print("hostname:", hostname)
-            
+
             # Generate 4-letter hash of POD_UID
             pod_hash = hashlib.md5(pod_uid.encode()).hexdigest()[:4]
-            return f"{pod_hash}{hostname}"
-        
-        elif os.environ.get('SLURM_JOBID'):
+            return f"{pod_hash}-{hostname}"
+
+        elif os.environ.get("SLURM_JOBID"):
             # SLURM environment
-            job_id = os.environ.get('SLURM_JOBID', '')
-            job_name = os.environ.get('SLURM_JOB_NAME', '')
+            job_id = os.environ.get("SLURM_JOBID", "")
+            job_name = os.environ.get("SLURM_JOB_NAME", "")
             return f"{job_id}_{job_name}_{PROCESS_INDEX}"
-        
+
         else:
             # Default case
             return datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -106,25 +109,29 @@ class MLFlowReporter:
     def _get_environment_tags(self):
         """Collect relevant environment information as tags."""
         tags = {}
-        
-        if os.environ.get('KUBERNETES_SERVICE_HOST'):
+
+        if os.environ.get("KUBERNETES_SERVICE_HOST"):
             # Kubernetes environment tags
-            tags.update({
-                'environment': 'kubernetes',
-                'pod_uid': os.environ.get('POD_UID', ''),
-                'hostname': os.environ.get('HOSTNAME', ''),
-            })
-        
-        elif os.environ.get('SLURM_JOBID'):
+            tags.update(
+                {
+                    "environment": "kubernetes",
+                    "pod_uid": os.environ.get("POD_UID", ""),
+                    "hostname": os.environ.get("HOSTNAME", ""),
+                }
+            )
+
+        elif os.environ.get("SLURM_JOBID"):
             # SLURM environment tags
-            tags.update({
-                'environment': 'slurm',
-                'slurm_job_id': os.environ.get('SLURM_JOBID', ''),
-                'slurm_job_name': os.environ.get('SLURM_JOB_NAME', ''),
-                'slurm_nodelist': os.environ.get('SLURM_NODELIST', ''),
-                'process_index': os.environ.get('NEURON_PJRT_PROCESS_INDEX', '')
-            })
-        
+            tags.update(
+                {
+                    "environment": "slurm",
+                    "slurm_job_id": os.environ.get("SLURM_JOBID", ""),
+                    "slurm_job_name": os.environ.get("SLURM_JOB_NAME", ""),
+                    "slurm_nodelist": os.environ.get("SLURM_NODELIST", ""),
+                    "process_index": os.environ.get("NEURON_PJRT_PROCESS_INDEX", ""),
+                }
+            )
+
         return tags
 
     def _report_metrics(self):
@@ -139,17 +146,17 @@ class MLFlowReporter:
             item = self.queue.get()
             if item is None:  # Shutdown signal
                 break
-            
+
             item_type, data = item
-            
+
             try:
-                if item_type == 'metric':
+                if item_type == "metric":
                     metric_name, value, step = data
                     mlflow.log_metric(metric_name, value, step=step)
-                elif item_type == 'param':
+                elif item_type == "param":
                     param_name, value = data
                     mlflow.log_param(param_name, value)
-                elif item_type == 'tag':
+                elif item_type == "tag":
                     tag_name, value = data
                     mlflow.set_tag(tag_name, value)
             except Exception as e:
@@ -158,25 +165,26 @@ class MLFlowReporter:
     def log_metric(self, name: str, value: float, step: Optional[int] = None):
         if step is None:
             step = int(datetime.now().timestamp())
-        self.queue.put(('metric', (name, value, step)))
+        self.queue.put(("metric", (name, value, step)))
 
     def log_param(self, name: str, value: Any):
         if value is not None:
-            self.queue.put(('param', (name, value)))
+            self.queue.put(("param", (name, value)))
 
     def log_tag(self, name: str, value: str):
         if value is not None:
-            self.queue.put(('tag', (name, value)))
+            self.queue.put(("tag", (name, value)))
 
     def log_config(self, config: Dict[str, Any], prefix: str = ""):
         """Recursively log configuration as parameters."""
+
         def _sanitize_key(key: str) -> str:
             # Replace invalid characters with underscores
-            sanitized = re.sub(r'[^\w\-\. :/]', '_', key)
+            sanitized = re.sub(r"[^\w\-\. :/]", "_", key)
             # Replace multiple consecutive underscores with a single one
-            sanitized = re.sub(r'_+', '_', sanitized)
+            sanitized = re.sub(r"_+", "_", sanitized)
             return sanitized
-    
+
         def _flatten_config(cfg: Dict[str, Any], parent_key: str = "") -> Dict[str, Any]:
             items = []
             for k, v in cfg.items():
@@ -186,7 +194,7 @@ class MLFlowReporter:
                 else:
                     items.append((_sanitize_key(new_key), v))
             return dict(items)
-        
+
         flattened = _flatten_config(config)
         for key, value in flattened.items():
             param_name = f"{prefix}{key}" if prefix else key
@@ -200,6 +208,7 @@ class MLFlowReporter:
         self.thread.join()
         mlflow.end_run()
 
+
 @measurement.register_recorder("scale_out_recorder")
 class ScaleOutRecorder(measurement.Recorder):
     def __init__(self, cfg):
@@ -209,13 +218,14 @@ class ScaleOutRecorder(measurement.Recorder):
         self.last_step_number = None
         self.job_start_time = None
         self.allow_list = [
-            r'/jax/checkpoint.*',
+            r"/jax/checkpoint.*",
+            r'/jax/orbax.*'
             # Add other patterns here
         ]
 
     def record(self, event: measurement.Event, *args, **kwargs):
         current_time = datetime.now()
-        
+
         # Record timestamp for every event
         if args and event == measurement.Event.START_STEP:
             step = args[0]
@@ -230,50 +240,49 @@ class ScaleOutRecorder(measurement.Recorder):
             if self.job_start_time:
                 job_duration = (current_time - self.job_start_time).total_seconds()
                 self.reporter.log_metric("job_duration", job_duration)
-            
+
             # Record duration for the last step if exists
             if self.last_step_time and self.last_step_number:
                 last_step_duration = (current_time - self.last_step_time).total_seconds()
-                self.reporter.log_metric("step_duration", last_step_duration, step=self.last_step_number)
+                self.reporter.log_metric(
+                    "step_duration", last_step_duration, step=self.last_step_number
+                )
 
         elif event == measurement.Event.START_STEP:
             current_step = args[0] if args else None
             current_time = datetime.now()
-            
+
             # Calculate duration between steps
             if self.last_step_time and self.last_step_number:
                 step_duration = (current_time - self.last_step_time).total_seconds()
                 self.reporter.log_metric("step_duration", step_duration, step=self.last_step_number)
-            
+
             # Update last step info
             self.last_step_time = current_time
             self.last_step_number = current_step
 
     def start_monitoring(self, *args, **kwargs):
         def event_duration_callback(event: str, duration_secs: float, **kwargs):
-            logging.info(f'[{PROCESS_INDEX}] {event}: val: {duration_secs}')
+            logging.info(f"[{PROCESS_INDEX}] {event}: val: {duration_secs}")
 
             if not any(re.match(pattern, event) for pattern in self.allow_list):
                 return
-                
-            metric_name = event.lstrip('/').replace('/', '_')
-            self.reporter.log_metric(
-                f"{metric_name}",
-                duration_secs,
-                step=kwargs.get('step')
-            )
-        
+
+            metric_name = event.lstrip("/").replace("/", "_")
+            self.reporter.log_metric(f"{metric_name}", duration_secs, step=kwargs.get("step"))
+
         jax.monitoring.register_event_duration_secs_listener(event_duration_callback)
 
     def __del__(self):
         self.reporter.close()
 
+
 class MyOrbaxCheckpointer(OrbaxCheckpointer):
     def __init__(self, cfg, *, parent):
         super().__init__(cfg, parent=parent)
         self._manager._logger = StandardLogger()
-    
-    def restore(self, *, step = None, state):
+
+    def restore(self, *, step=None, state):
         # There is an existing bug in Axlearn which fails here during job_start
         # when step=None is passed to try restore.
         # Orbax does not expect step to be None and fails the job throwing an exception.
@@ -282,8 +291,9 @@ class MyOrbaxCheckpointer(OrbaxCheckpointer):
         # if no latest checkpoing is present return immediately without calling orbax layer.
         if step == None:
             return step, state
-        
+
         return super().restore(step=step, state=state)
+
 
 class StandardLogger(abstract_logger.AbstractLogger):
     def __init__(self):
@@ -291,21 +301,20 @@ class StandardLogger(abstract_logger.AbstractLogger):
         self.recorder = measurement.global_recorder
 
     def log_entry(self, msg, *args, **kwargs):
-        logging.info(f'[{PROCESS_INDEX}] {msg}')
+        logging.info(f"[{PROCESS_INDEX}] {msg}")
 
         if isinstance(msg, dict):
             for key, value in msg.items():
                 if isinstance(value, (int, float)):
                     self.recorder.reporter.log_metric(
-                        f"checkpoint_{key}",
-                        value,
-                        step=msg.get('step', 0)
+                        f"checkpoint_{key}", value, step=msg.get("step", 0)
                     )
 
+
 def main(_):
-    measurement.global_recorder = ScaleOutRecorder(measurement.Recorder.default_config().set(
-        name='ScaleOutRecorder'
-    ))
+    measurement.global_recorder = ScaleOutRecorder(
+        measurement.Recorder.default_config().set(name="ScaleOutRecorder")
+    )
 
     launch.setup()
     trainer_config = launch_trainer.get_trainer_config()
@@ -316,15 +325,13 @@ def main(_):
     # Log model configuration to MLflow
     try:
         config_dict = trainer_config.to_dict()
-        measurement.global_recorder.reporter.log_config(
-            config_dict,
-            prefix="model_config."
-        )
+        measurement.global_recorder.reporter.log_config(config_dict, prefix="model_config.")
     except Exception as e:
         print(f"Error logging model configuration: {e}")
 
     measurement.start_monitoring()
     launch_trainer.run_trainer(trainer_config)
+
 
 if __name__ == "__main__":
     measurement.define_flags()
