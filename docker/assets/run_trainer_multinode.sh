@@ -3,7 +3,8 @@
 # Sync changes
 git config --global --add safe.directory $PROJECT_PATH/axlearn
 cd $PROJECT_PATH/axlearn
-git diff origin/HEAD --no-color > changes.patch
+# git diff origin/HEAD --no-color > changes.patch
+git diff 26734626c9bb1a5f201fec65e8f1c2910e66da55 --no-color > changes.patch
 echo "patch generated"
 cd /neuron/axlearn
 echo "applying patch"

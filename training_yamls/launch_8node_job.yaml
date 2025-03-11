@@ -18,7 +18,7 @@ spec:
              imagePullPolicy: Always
              env:
                - name: POD_UID
-                 value: "a5d2bfbb-4d72-472f-b7c5-6e42ae4b4ed6"
+                 value: "a77d6b7d-f84e-465a-896d-3b1cfa17880b"
                - name: NUM_NODES
                  value: "8"
                - name: TP_DEGREE
