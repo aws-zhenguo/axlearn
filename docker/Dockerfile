@@ -88,12 +88,12 @@ RUN cd packages \
   && rm -fr /neuron/packages
 
 # Install axlearn
-RUN git clone https://github.com/aws-zhenguo/axlearn.git -b scale-out \
+RUN git clone https://github.com/apple/axlearn.git \
   && cd axlearn \
-  && $PIP install -U pip \
+#  && $PIP install -U pip \
   && $PIP install -e '.[core,dev]'
 
-RUN $PIP install pyinstrument
+RUN $PIP install 'mlflow-skinny'
 
 # For testing, we often need to make some local changes to AXLearn fuji.py (batchsize, num_layers)
 # COPY ./axlearn /neuron/axlearn
