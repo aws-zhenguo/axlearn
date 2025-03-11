@@ -111,3 +111,7 @@ ENV PATH="${PATH}:/opt/aws/neuron/bin"
 # allow configurable path for different users
 ARG PROJECT_PATH_ARG
 ENV PROJECT_PATH=$PROJECT_PATH_ARG
+
+# publish to mlflow
+ARG MLFLOW_TRACKING_URI_ARG
+ENV MLFLOW_TRACKING_URI=$MLFLOW_TRACKING_URI_ARG

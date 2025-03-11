@@ -45,6 +45,8 @@ spec:
              - NUM_LAYERS
              - -x
              - PROJECT_PATH
+             - -x
+             - MLFLOW_TRACKING_URI
              - -wdir
              - /neuron/
              - /neuron/run_trainer_multinode.sh

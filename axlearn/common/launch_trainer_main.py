@@ -24,28 +24,32 @@ from absl import logging
 
 from axlearn.experiments.text.gpt.common import mesh_shape_from_axes
 
-# NUM_NODES = int(os.environ.get("NUM_NODES", 2))
-# TP_DEGREE = int(os.environ.get("TP_DEGREE", 4))
-# TRAIN_BATCH_SIZE = int(os.environ.get("TRAIN_BATCH_SIZE", NUM_NODES * 64 // TP_DEGREE))
-# NUM_LAYERS = int(os.environ.get("NUM_LAYERS", 8))
+NUM_NODES = int(os.environ.get("NUM_NODES", 2))
+TP_DEGREE = int(os.environ.get("TP_DEGREE", 4))
+TRAIN_BATCH_SIZE = int(os.environ.get("TRAIN_BATCH_SIZE", NUM_NODES * 64 // TP_DEGREE))
+NUM_LAYERS = int(os.environ.get("NUM_LAYERS", 8))
 
-# print("NUM_NODES", NUM_NODES)
-# print("TP_DEGREE", TP_DEGREE)
-# print("NUM_LAYERS", NUM_LAYERS)
-# print("TRAIN_BATCH_SIZE", TRAIN_BATCH_SIZE)
+print("NUM_NODES", NUM_NODES)
+print("TP_DEGREE", TP_DEGREE)
+print("NUM_LAYERS", NUM_LAYERS)
+print("TRAIN_BATCH_SIZE", TRAIN_BATCH_SIZE)
             
 PROCESS_INDEX = os.environ['NEURON_PJRT_PROCESS_INDEX']
 
 def update_trainer_config(trainer_config):
+    # config checkpointer
     existing_save_policy = trainer_config.checkpointer.save_policy
     trainer_config.checkpointer = MyOrbaxCheckpointer.default_config()
-    trainer_config.checkpointer.keep_last_n = 1000
-    # trainer_config.model.decoder.transformer.set(num_layers=NUM_LAYERS)
-    # trainer_config.set(max_step=101)
-    # trainer_config.input_dispatcher.global_logical_batch_size.set(global_batch_size=TRAIN_BATCH_SIZE)
-        
+    trainer_config.checkpointer.keep_last_n = 100
+    trainer_config.checkpointer.keep_every_n_steps = 100000
     trainer_config.checkpointer.save_policy = existing_save_policy
-    # trainer_config.checkpointer.save_policy.set(n=100)
+    trainer_config.checkpointer.save_policy.set(n=10)
+
+    # config trainer
+    trainer_config.model.decoder.transformer.set(num_layers=NUM_LAYERS)
+    trainer_config.set(max_step=101)
+    trainer_config.input.input_dispatcher.set(global_logical_batch_size=TRAIN_BATCH_SIZE)
+        
     # trainer_config.mesh_shape = mesh_shape_from_axes(data=1, fsdp=-1, model=4)
 
     return trainer_config
@@ -82,7 +86,8 @@ class MLFlowReporter:
         if os.environ.get('POD_UID'):
             # Kubernetes environment
             pod_uid = os.environ.get('POD_UID', '')
-            hostname = os.environ.get('HOSTNAME', '')
+            hostname = os.environ.get('PMIX_HOSTNAME', '')
+            print("hostname:", hostname)
             
             # Generate 4-letter hash of POD_UID
             pod_hash = hashlib.md5(pod_uid.encode()).hexdigest()[:4]
@@ -308,7 +313,7 @@ def main(_):
 
     trainer_config = update_trainer_config(trainer_config)
 
-    Log model configuration to MLflow
+    # Log model configuration to MLflow
     try:
         config_dict = trainer_config.to_dict()
         measurement.global_recorder.reporter.log_config(
