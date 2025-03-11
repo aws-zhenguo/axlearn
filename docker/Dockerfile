@@ -91,7 +91,7 @@ RUN cd packages \
 RUN git clone https://github.com/aws-zhenguo/axlearn.git -b scale-out \
   && cd axlearn \
   && $PIP install -U pip \
-  && $PIP install '.[core,dev]'
+  && $PIP install -e '.[core,dev]'
 
 RUN $PIP install pyinstrument
 
