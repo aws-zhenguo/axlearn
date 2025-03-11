@@ -1,7 +1,7 @@
 apiVersion: kubeflow.org/v2beta1
 kind: MPIJob
 metadata:
-  name: mpi-jax-train-8node
+  name: mpi-jax-train-8node-czhenguo
 spec:
   slotsPerWorker: 1
   runPolicy:
@@ -13,14 +13,12 @@ spec:
       template:
          spec:
            containers:
-           - image: 621547421844.dkr.ecr.us-east-2.amazonaws.com/eks_trn2_axlearn:axlearn_neuronx
+           - image: 621547421844.dkr.ecr.us-east-2.amazonaws.com/eks_trn2_axlearn:axlearn_neuronx-czhenguo
              name: mpitest
              imagePullPolicy: Always
              env:
                - name: POD_UID
-                 valueFrom:
-                  fieldRef:
-                    fieldPath: metadata.uid
+                 value: "a5d2bfbb-4d72-472f-b7c5-6e42ae4b4ed6"
                - name: NUM_NODES
                  value: "8"
                - name: TP_DEGREE
@@ -52,7 +50,7 @@ spec:
              - /neuron/run_trainer_multinode.sh
            initContainers:
            - name: wait-hostfilename
-             image: 621547421844.dkr.ecr.us-east-2.amazonaws.com/eks_trn2_axlearn:axlearn_neuronx
+             image: 621547421844.dkr.ecr.us-east-2.amazonaws.com/eks_trn2_axlearn:axlearn_neuronx-czhenguo
              command:
              - bash
              - -cx
@@ -77,7 +75,7 @@ spec:
                     values:
                     - trn2.48xlarge
           containers:
-          - image: 621547421844.dkr.ecr.us-east-2.amazonaws.com/eks_trn2_axlearn:axlearn_neuronx
+          - image: 621547421844.dkr.ecr.us-east-2.amazonaws.com/eks_trn2_axlearn:axlearn_neuronx-czhenguo
             name: mpitest
             imagePullPolicy: Always
             resources:
