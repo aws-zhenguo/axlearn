@@ -49,7 +49,7 @@ def update_trainer_config(trainer_config):
 
     # config trainer
     trainer_config.model.decoder.transformer.set(num_layers=NUM_LAYERS)
-    trainer_config.set(max_step=101)
+    trainer_config.set(max_step=21)
     trainer_config.input.input_dispatcher.set(global_logical_batch_size=TRAIN_BATCH_SIZE)
 
     # trainer_config.mesh_shape = mesh_shape_from_axes(data=1, fsdp=-1, model=4)

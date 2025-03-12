@@ -98,5 +98,5 @@ spec:
               medium: Memory
           - name: persistent-storage
             persistentVolumeClaim:
-              claimName: ktf-pvc
+              claimName: ktf-pvc3
 
