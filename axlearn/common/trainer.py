@@ -570,6 +570,8 @@ class SpmdTrainer(Module):
             if not self._prepare_training(prng_key):
                 return None
 
+            print("Finished loading checkpoint")
+            return
             self._is_initialized = True
 
             with self.checkpointer:

@@ -3,6 +3,7 @@
 """Main function for launching the trainer."""
 
 import os
+import time
 from absl import app, flags
 import threading
 import re
@@ -13,6 +14,7 @@ from axlearn.common import launch, launch_trainer, measurement
 from axlearn.common.config import config_for_function
 from axlearn.common import measurement
 from axlearn.common.checkpointer_orbax import OrbaxCheckpointer
+from axlearn.common.checkpointer import parse_step_from_dir
 from orbax.checkpoint.logging import abstract_logger
 from axlearn.common.config import REQUIRED, Required, config_class, maybe_set_config
 import jax
@@ -73,7 +75,7 @@ class MLFlowReporter:
         with cls._lock:
             if not cls._mlflow_initialized:
                 mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI"))
-                mlflow.set_experiment("scale_out_training_metrics_czhenguo")
+                mlflow.set_experiment("scale_out_training_recovery_metrics_czhenguo")
 
                 # Generate run name
                 run_name = cls._generate_run_name()
@@ -110,7 +112,7 @@ class MLFlowReporter:
         """Collect relevant environment information as tags."""
         tags = {}
 
-        if os.environ.get("KUBERNETES_SERVICE_HOST"):
+        if os.environ.get("POD_UID"):
             # Kubernetes environment tags
             tags.update(
                 {
@@ -151,8 +153,8 @@ class MLFlowReporter:
 
             try:
                 if item_type == "metric":
-                    metric_name, value, step = data
-                    mlflow.log_metric(metric_name, value, step=step)
+                    metric_name, value, step, timestamp = data
+                    mlflow.log_metric(metric_name, value, step=step, timestamp=timestamp)
                 elif item_type == "param":
                     param_name, value = data
                     mlflow.log_param(param_name, value)
@@ -164,8 +166,8 @@ class MLFlowReporter:
 
     def log_metric(self, name: str, value: float, step: Optional[int] = None):
         if step is None:
-            step = int(datetime.now().timestamp())
-        self.queue.put(("metric", (name, value, step)))
+            step = None
+        self.queue.put(("metric", (name, value, step, int(datetime.now().timestamp()))))
 
     def log_param(self, name: str, value: Any):
         if value is not None:
@@ -219,7 +221,7 @@ class ScaleOutRecorder(measurement.Recorder):
         self.job_start_time = None
         self.allow_list = [
             r"/jax/checkpoint.*",
-            r'/jax/orbax.*'
+            r"/jax/orbax.*",
             # Add other patterns here
         ]
 
@@ -290,7 +292,8 @@ class MyOrbaxCheckpointer(OrbaxCheckpointer):
         # The right way to handle this is to try to get the latest checkpoint if step=None and
         # if no latest checkpoing is present return immediately without calling orbax layer.
         if step == None:
-            return step, state
+            ckpt_dir = self.latest_checkpoint_path(self.config.dir)
+            step = parse_step_from_dir(ckpt_dir)
 
         return super().restore(step=step, state=state)
 
@@ -331,6 +334,9 @@ def main(_):
 
     measurement.start_monitoring()
     launch_trainer.run_trainer(trainer_config)
+
+    # wait for mlflow to finish publishing metrics
+    time.sleep(180)
 
 
 if __name__ == "__main__":
