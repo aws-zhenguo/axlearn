@@ -33,6 +33,8 @@ spec:
                  value: "OrbaxCheckpointer"
                - name: PROJECT_PATH
                  value: "/shared/czhenguo/Projects/fruitstand"
+               - name: MLFLOW_EXPERIMENT_NAME
+                 value: "scale_out_training_recovery_metrics_czhenguo"
              command:
              - mpirun
              - --allow-run-as-root
@@ -61,6 +63,8 @@ spec:
              - PROJECT_PATH
              - -x
              - MLFLOW_TRACKING_URI
+             - -x
+             - MLFLOW_EXPERIMENT_NAME
              - -wdir
              - /neuron/
              - /neuron/run_trainer_multinode.sh

@@ -33,6 +33,7 @@ NUM_LAYERS = int(os.environ.get("NUM_LAYERS", 8))
 SAVE_EVERY_N_STEPS = int(os.environ.get("SAVE_EVERY_N_STEPS", 10))
 CHECKPOINTER_TYPE = os.environ.get("CHECKPOINTER_TYPE")
 MAX_STEPS = int(os.environ.get("MAX_STEPS", 200))
+MLFLOW_EXPERIMENT_NAME = os.environ.get("MLFLOW_EXPERIMENT_NAME", "scale_out_training_metrics")
 
 print("NUM_NODES", NUM_NODES)
 print("TP_DEGREE", TP_DEGREE)
@@ -81,7 +82,7 @@ class MLFlowReporter:
         with cls._lock:
             if not cls._mlflow_initialized:
                 mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI"))
-                mlflow.set_experiment("scale_out_training_recovery_metrics_czhenguo")
+                mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
 
                 # Generate run name
                 run_name = cls._generate_run_name()
