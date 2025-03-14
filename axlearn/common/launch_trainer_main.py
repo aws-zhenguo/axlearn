@@ -92,7 +92,6 @@ class MLFlowReporter:
             # Kubernetes environment
             pod_uid = os.environ.get("POD_UID", "")
             hostname = os.environ.get("PMIX_HOSTNAME", "")
-            print("hostname:", hostname)
 
             # Generate 4-letter hash of POD_UID
             pod_hash = hashlib.md5(pod_uid.encode()).hexdigest()[:4]
@@ -222,6 +221,7 @@ class ScaleOutRecorder(measurement.Recorder):
         self.allow_list = [
             r"/jax/checkpoint.*",
             r"/jax/orbax.*",
+            r"/axlearn/common.*",
             # Add other patterns here
         ]
 
@@ -292,8 +292,13 @@ class MyOrbaxCheckpointer(OrbaxCheckpointer):
         # The right way to handle this is to try to get the latest checkpoint if step=None and
         # if no latest checkpoing is present return immediately without calling orbax layer.
         if step == None:
-            ckpt_dir = self.latest_checkpoint_path(self.config.dir)
-            step = parse_step_from_dir(ckpt_dir)
+            try:
+                ckpt_dir = self.latest_checkpoint_path(self.config.dir)
+                step = parse_step_from_dir(ckpt_dir)
+            except IndexError:
+                logging.info("Could not find any completed checkpoints under %s", self.config.dir)
+                return step, state
+
 
         return super().restore(step=step, state=state)
 
@@ -319,7 +324,10 @@ def main(_):
         measurement.Recorder.default_config().set(name="ScaleOutRecorder")
     )
 
+    setup_start_time = time.time()
     launch.setup()
+    setup_end_time = time.time()
+
     trainer_config = launch_trainer.get_trainer_config()
     trainer_config.set(recorder=config_for_function(lambda: measurement.global_recorder))
 
@@ -333,7 +341,15 @@ def main(_):
         print(f"Error logging model configuration: {e}")
 
     measurement.start_monitoring()
+    jax.monitoring.record_event_duration_secs(
+        "/axlearn/common/launch/setup_duration_sec", setup_end_time - setup_start_time
+    )
+    trainer_start_time = time.time()
     launch_trainer.run_trainer(trainer_config)
+    trainer_end_time = time.time()
+    jax.monitoring.record_event_duration_secs(
+        "/axlearn/common/launch/run_trainer_duration_sec", trainer_end_time - trainer_start_time
+    )
 
     # wait for mlflow to finish publishing metrics
     time.sleep(180)

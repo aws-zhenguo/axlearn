@@ -2,6 +2,7 @@
 
 """Utilities to launch a trainer."""
 
+import time
 import json
 import os
 from typing import Any, Optional
@@ -147,7 +148,11 @@ def run_trainer(trainer_config: SpmdTrainer.Config) -> Any:
                 f,
             )
 
+    init_trainer_start_time = time.time()
     trainer: SpmdTrainer = trainer_config.instantiate(parent=None)
+    jax.monitoring.record_event_duration_secs(
+        "/axlearn/common/launch/init_trainer_duration_sec", time.time() - init_trainer_start_time
+    )
     prng_key = jax.random.PRNGKey(seed=FLAGS.trainer_prng_seed)
     output = trainer.run(prng_key)
     measurement.record_event(measurement.Event.END_JOB)

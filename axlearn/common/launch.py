@@ -6,6 +6,7 @@ import contextlib
 import importlib
 import os
 import sys
+import time
 
 # pylint: disable-next=ungrouped-imports
 from axlearn.common import compiler_options
@@ -128,7 +129,11 @@ def setup():
         status_server = StatusHTTPServer(FLAGS.status_port)
         status_server.start()
 
+    get_device_time = time.time()
     devices = jax.devices()
+    jax.monitoring.record_event_duration_secs(
+        "/axlearn/common/launch/get_device_duration_sec", time.time() - get_device_time
+    )
     logging.info("Devices: %s", devices)
     local_devices = jax.local_devices()
     logging.info("Local Devices: %s", local_devices)
