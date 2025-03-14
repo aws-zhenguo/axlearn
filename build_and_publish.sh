@@ -1,5 +1,5 @@
 # docker build dockerbuild -t k8simage
-TAG=axlearn_neuronx-czhenguo
+TAG=scale-out-live
 MLFLOW_TRACKING_URI="https://alpha.mlflow.neuron.annapurna.aws.dev"
 
 docker build \

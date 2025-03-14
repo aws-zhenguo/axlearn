@@ -52,10 +52,10 @@ fi
 set
 
 # Run the training script
-python3 -m axlearn.common.launch_trainer_main \
-        --module=text.gpt.c4_trainer --config=fuji-70B-v2-flash \
-        --trainer_dir=$OUTPUT_DIR --data_dir=$DATA_DIR \
-        --jax_backend=neuron --mesh_selector=neuron-trn2.48xlarge-64 \
-        --distributed_coordinator=$COORDINATOR_ADDRESS \
-        --num_processes=$OMPI_COMM_WORLD_SIZE \
-        --process_id=$OMPI_COMM_WORLD_RANK 2>&1 | tee ${OUTPUT_DIR}/${PMIX_HOSTNAME}.log
+python3 -m axlearn.common.scale_out_trainer \
+    --module=text.gpt.c4_trainer --config=fuji-70B-v2-flash \
+    --trainer_dir=$OUTPUT_DIR --data_dir=$DATA_DIR \
+    --jax_backend=neuron --mesh_selector=neuron-trn2.48xlarge-64 \
+    --distributed_coordinator=$COORDINATOR_ADDRESS \
+    --num_processes=$OMPI_COMM_WORLD_SIZE \
+    --process_id=$OMPI_COMM_WORLD_RANK 2>&1 | tee ${OUTPUT_DIR}/${PMIX_HOSTNAME}.log
