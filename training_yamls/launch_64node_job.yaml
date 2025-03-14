@@ -25,6 +25,14 @@ spec:
                  value: "4"
                - name: NUM_LAYERS
                  value: "80"
+               - name: MAX_STEPS
+                 value: "20"
+               - name: SAVE_EVERY_N_STEPS
+                 value: "10"
+               - name: CHECKPOINTER_TYPE
+                 value: "OrbaxCheckpointer"
+               - name: PROJECT_PATH
+                 value: "/shared/czhenguo/Projects/fruitstand"
              command:
              - mpirun
              - --allow-run-as-root
@@ -43,6 +51,12 @@ spec:
              - TP_DEGREE
              - -x
              - NUM_LAYERS
+             - -x
+             - MAX_STEPS
+             - -x
+             - SAVE_EVERY_N_STEPS
+             - -x
+             - CHECKPOINTER_TYPE
              - -x
              - PROJECT_PATH
              - -x

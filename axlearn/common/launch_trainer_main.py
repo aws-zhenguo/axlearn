@@ -30,6 +30,9 @@ NUM_NODES = int(os.environ.get("NUM_NODES", 2))
 TP_DEGREE = int(os.environ.get("TP_DEGREE", 4))
 TRAIN_BATCH_SIZE = int(os.environ.get("TRAIN_BATCH_SIZE", NUM_NODES * 64 // TP_DEGREE))
 NUM_LAYERS = int(os.environ.get("NUM_LAYERS", 8))
+SAVE_EVERY_N_STEPS = int(os.environ.get("SAVE_EVERY_N_STEPS", 10))
+CHECKPOINTER_TYPE = os.environ.get("CHECKPOINTER_TYPE")
+MAX_STEPS = int(os.environ.get("MAX_STEPS", 200))
 
 print("NUM_NODES", NUM_NODES)
 print("TP_DEGREE", TP_DEGREE)
@@ -42,16 +45,19 @@ PROCESS_INDEX = os.environ["NEURON_PJRT_PROCESS_INDEX"]
 def update_trainer_config(trainer_config):
     # config checkpointer
     existing_save_policy = trainer_config.checkpointer.save_policy
-    trainer_config.checkpointer = MyOrbaxCheckpointer.default_config()
+
+    if CHECKPOINTER_TYPE == "OrbaxCheckpointer":
+        trainer_config.checkpointer = MyOrbaxCheckpointer.default_config()
+
     trainer_config.checkpointer.keep_last_n = 100
     # orbax checkpointer does not have keep_every_n_steps option
     # trainer_config.checkpointer.set(keep_every_n_steps=100000)
     trainer_config.checkpointer.save_policy = existing_save_policy
-    trainer_config.checkpointer.save_policy.set(n=10)
+    trainer_config.checkpointer.save_policy.set(n=SAVE_EVERY_N_STEPS)
 
     # config trainer
     trainer_config.model.decoder.transformer.set(num_layers=NUM_LAYERS)
-    trainer_config.set(max_step=21)
+    trainer_config.set(max_step=MAX_STEPS)
     trainer_config.input.input_dispatcher.set(global_logical_batch_size=TRAIN_BATCH_SIZE)
 
     # trainer_config.mesh_shape = mesh_shape_from_axes(data=1, fsdp=-1, model=4)
@@ -298,7 +304,6 @@ class MyOrbaxCheckpointer(OrbaxCheckpointer):
             except IndexError:
                 logging.info("Could not find any completed checkpoints under %s", self.config.dir)
                 return step, state
-
 
         return super().restore(step=step, state=state)
 
