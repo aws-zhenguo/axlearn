@@ -563,12 +563,16 @@ class TensorStoreStateStorage(StateStorage):
     def _restore_tensorstore_state(
         self, state, *, ckpt_dir: str, spec: CheckpointSpec, sync: bool = True
     ):
+        deserialization_start_time = time.time()
         restored_gda_values = self._manager.deserialize(
             shardings=spec.shardings,
             tensorstore_specs=spec.tensorstore_specs,
             global_shapes=spec.shapes,
             dtypes=spec.dtypes,
             concurrent_gb=self._max_concurrent_restore_gb,
+        )
+        jax.monitoring.record_event_duration_secs(
+            "/axlearn/common/checkpointer/deserialization_duration_sec", time.time() - deserialization_start_time
         )
         state_leaves = []
         for path, value in spec.index:
