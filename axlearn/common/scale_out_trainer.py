@@ -34,11 +34,13 @@ SAVE_EVERY_N_STEPS = int(os.environ.get("SAVE_EVERY_N_STEPS", 10))
 CHECKPOINTER_TYPE = os.environ.get("CHECKPOINTER_TYPE")
 MAX_STEPS = int(os.environ.get("MAX_STEPS", 200))
 MLFLOW_EXPERIMENT_NAME = os.environ.get("MLFLOW_EXPERIMENT_NAME", "scale_out_training_metrics")
+WORKER_0_METRICS_ONLY = os.environ.get("WORKER_0_METRICS_ONLY", "True").lower() == "true"
 
 print("NUM_NODES", NUM_NODES)
 print("TP_DEGREE", TP_DEGREE)
 print("NUM_LAYERS", NUM_LAYERS)
 print("TRAIN_BATCH_SIZE", TRAIN_BATCH_SIZE)
+print("WORKER_0_METRICS_ONLY", WORKER_0_METRICS_ONLY)
 
 PROCESS_INDEX = os.environ["NEURON_PJRT_PROCESS_INDEX"]
 
@@ -156,25 +158,52 @@ class MLFlowReporter:
         for key, value in env_tags.items():
             mlflow.set_tag(key, value)
 
-        while True:
-            item = self.queue.get()
-            if item is None:  # Shutdown signal
-                break
+        # Create a local log file for metrics only
+        log_dir = os.environ.get("METRICS_LOG_DIR", ".")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file_path = os.path.join(log_dir, f"metrics_worker_{PROCESS_INDEX}.log")
 
-            item_type, data = item
+        with open(log_file_path, "a") as log_file:
+            log_file.write(
+                f"Starting metrics logging for worker {PROCESS_INDEX} at {datetime.now()}\n"
+            )
 
-            try:
+            while True:
+                item = self.queue.get()
+                if item is None:  # Shutdown signal
+                    log_file.write(
+                        f"Ending metrics logging for worker {PROCESS_INDEX} at {datetime.now()}\n"
+                    )
+                    break
+
+                item_type, data = item
+
+                # Log metrics to local file (only metrics, not params or tags)
                 if item_type == "metric":
-                    metric_name, value, step, timestamp = data
-                    mlflow.log_metric(metric_name, value, step=step, timestamp=timestamp)
-                elif item_type == "param":
-                    param_name, value = data
-                    mlflow.log_param(param_name, value)
-                elif item_type == "tag":
-                    tag_name, value = data
-                    mlflow.set_tag(tag_name, value)
-            except Exception as e:
-                print(f"Error logging {item_type} {data}: {e}")
+                    try:
+                        metric_name, value, step, timestamp = data
+                        timestamp_str = datetime.fromtimestamp(timestamp).isoformat()
+                        log_file.write(
+                            f"{timestamp_str} - METRIC: {metric_name}={value} (step={step})\n"
+                        )
+                        log_file.flush()  # Ensure metrics are written immediately
+                    except Exception as e:
+                        print(f"Error logging to file: {e}")
+
+                # Only log to MLflow if WORKER_0_METRICS_ONLY is False or this is worker-0
+                if not WORKER_0_METRICS_ONLY or PROCESS_INDEX == "0":
+                    try:
+                        if item_type == "metric":
+                            metric_name, value, step, timestamp = data
+                            mlflow.log_metric(metric_name, value, step=step, timestamp=timestamp)
+                        elif item_type == "param":
+                            param_name, value = data
+                            mlflow.log_param(param_name, value)
+                        elif item_type == "tag":
+                            tag_name, value = data
+                            mlflow.set_tag(tag_name, value)
+                    except Exception as e:
+                        print(f"Error logging to MLflow: {item_type} {data}: {e}")
 
     def log_metric(self, name: str, value: float, step: Optional[int] = None):
         if step is None:
@@ -278,11 +307,14 @@ class ScaleOutRecorder(measurement.Recorder):
 
     def start_monitoring(self, *args, **kwargs):
         def event_duration_callback(event: str, duration_secs: float, **kwargs):
+            # Always log to console regardless of WORKER_0_METRICS_ONLY setting
             logging.info(f"[{PROCESS_INDEX}] {event}: val: {duration_secs}")
 
+            # Skip if event doesn't match any pattern in allow_list
             if not any(re.match(pattern, event) for pattern in self.allow_list):
                 return
 
+            # Log the metric (this will handle both local file logging and MLflow logging with WORKER_0_METRICS_ONLY check)
             metric_name = event.lstrip("/").replace("/", "_")
             self.reporter.log_metric(f"{metric_name}", duration_secs, step=kwargs.get("step"))
 
