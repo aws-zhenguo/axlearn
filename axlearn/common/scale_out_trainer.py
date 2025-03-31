@@ -43,6 +43,8 @@ print("TRAIN_BATCH_SIZE", TRAIN_BATCH_SIZE)
 print("WORKER_0_METRICS_ONLY", WORKER_0_METRICS_ONLY)
 
 PROCESS_INDEX = os.environ["NEURON_PJRT_PROCESS_INDEX"]
+jax.config.update("jax_logging_level", "DEBUG")
+jax.config.update("jax_explain_cache_misses", True)
 
 
 def update_trainer_config(trainer_config):
@@ -158,52 +160,25 @@ class MLFlowReporter:
         for key, value in env_tags.items():
             mlflow.set_tag(key, value)
 
-        # Create a local log file for metrics only
-        log_dir = os.environ.get("METRICS_LOG_DIR", ".")
-        os.makedirs(log_dir, exist_ok=True)
-        log_file_path = os.path.join(log_dir, f"metrics_worker_{PROCESS_INDEX}.log")
+        while True:
+            item = self.queue.get()
+            if item is None:  # Shutdown signal
+                break
 
-        with open(log_file_path, "a") as log_file:
-            log_file.write(
-                f"Starting metrics logging for worker {PROCESS_INDEX} at {datetime.now()}\n"
-            )
+            item_type, data = item
 
-            while True:
-                item = self.queue.get()
-                if item is None:  # Shutdown signal
-                    log_file.write(
-                        f"Ending metrics logging for worker {PROCESS_INDEX} at {datetime.now()}\n"
-                    )
-                    break
-
-                item_type, data = item
-
-                # Log metrics to local file (only metrics, not params or tags)
+            try:
                 if item_type == "metric":
-                    try:
-                        metric_name, value, step, timestamp = data
-                        timestamp_str = datetime.fromtimestamp(timestamp).isoformat()
-                        log_file.write(
-                            f"{timestamp_str} - METRIC: {metric_name}={value} (step={step})\n"
-                        )
-                        log_file.flush()  # Ensure metrics are written immediately
-                    except Exception as e:
-                        print(f"Error logging to file: {e}")
-
-                # Only log to MLflow if WORKER_0_METRICS_ONLY is False or this is worker-0
-                if not WORKER_0_METRICS_ONLY or PROCESS_INDEX == "0":
-                    try:
-                        if item_type == "metric":
-                            metric_name, value, step, timestamp = data
-                            mlflow.log_metric(metric_name, value, step=step, timestamp=timestamp)
-                        elif item_type == "param":
-                            param_name, value = data
-                            mlflow.log_param(param_name, value)
-                        elif item_type == "tag":
-                            tag_name, value = data
-                            mlflow.set_tag(tag_name, value)
-                    except Exception as e:
-                        print(f"Error logging to MLflow: {item_type} {data}: {e}")
+                    metric_name, value, step, timestamp = data
+                    mlflow.log_metric(metric_name, value, step=step, timestamp=timestamp)
+                elif item_type == "param":
+                    param_name, value = data
+                    mlflow.log_param(param_name, value)
+                elif item_type == "tag":
+                    tag_name, value = data
+                    mlflow.set_tag(tag_name, value)
+            except Exception as e:
+                print(f"Error logging {item_type} {data}: {e}")
 
     def log_metric(self, name: str, value: float, step: Optional[int] = None):
         if step is None:
@@ -307,16 +282,14 @@ class ScaleOutRecorder(measurement.Recorder):
 
     def start_monitoring(self, *args, **kwargs):
         def event_duration_callback(event: str, duration_secs: float, **kwargs):
-            # Always log to console regardless of WORKER_0_METRICS_ONLY setting
+            logging.info(f"kwargs: {kwargs}")
             logging.info(f"[{PROCESS_INDEX}] {event}: val: {duration_secs}")
 
-            # Skip if event doesn't match any pattern in allow_list
             if not any(re.match(pattern, event) for pattern in self.allow_list):
                 return
 
-            # Log the metric (this will handle both local file logging and MLflow logging with WORKER_0_METRICS_ONLY check)
             metric_name = event.lstrip("/").replace("/", "_")
-            self.reporter.log_metric(f"{metric_name}", duration_secs, step=kwargs.get("step"))
+            self.reporter.log_metric(f"{metric_name}", duration_secs, step=self.last_step_number)
 
         jax.monitoring.register_event_duration_secs_listener(event_duration_callback)
 
@@ -355,6 +328,9 @@ class StandardLogger(abstract_logger.AbstractLogger):
     def log_entry(self, msg, *args, **kwargs):
         logging.info(f"[{PROCESS_INDEX}] {msg}")
 
+        if self.recorder is None:
+            return
+
         if isinstance(msg, dict):
             for key, value in msg.items():
                 if isinstance(value, (int, float)):
@@ -364,10 +340,12 @@ class StandardLogger(abstract_logger.AbstractLogger):
 
 
 def main(_):
-    measurement.global_recorder = ScaleOutRecorder(
-        measurement.Recorder.default_config().set(name="ScaleOutRecorder")
-    )
+    if PROCESS_INDEX == "0":
+        measurement.global_recorder = ScaleOutRecorder(
+            measurement.Recorder.default_config().set(name="ScaleOutRecorder")
+        )
 
+    measurement.start_monitoring()
     setup_start_time = time.time()
     launch.setup()
     setup_end_time = time.time()
@@ -384,7 +362,6 @@ def main(_):
     except Exception as e:
         print(f"Error logging model configuration: {e}")
 
-    measurement.start_monitoring()
     jax.monitoring.record_event_duration_secs(
         "/axlearn/common/launch/setup_duration_sec", setup_end_time - setup_start_time
     )

@@ -5,7 +5,7 @@ ARG PIP="python3.10 -m pip"
 
 WORKDIR /neuron
 
-COPY ./neuron_binaries /neuron/packages
+COPY ./neuron_binaries_simulator /neuron/packages
 ADD https://pip.repos.neuron.amazonaws.com/aws-neuronx-runtime-discovery/aws-neuronx-runtime-discovery-2.9.tar.gz /neuron/packages
 
 # Install dependencies, common utils
@@ -90,6 +90,7 @@ RUN cd packages \
 # Install axlearn
 RUN git clone https://github.com/apple/axlearn.git \
   && cd axlearn \
+  && git checkout 26734626c9bb1a5f201fec65e8f1c2910e66da55 \
 #  && $PIP install -U pip \
   && $PIP install -e '.[core,dev]'
 
