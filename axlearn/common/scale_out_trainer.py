@@ -35,12 +35,20 @@ CHECKPOINTER_TYPE = os.environ.get("CHECKPOINTER_TYPE")
 MAX_STEPS = int(os.environ.get("MAX_STEPS", 200))
 MLFLOW_EXPERIMENT_NAME = os.environ.get("MLFLOW_EXPERIMENT_NAME", "scale_out_training_metrics")
 WORKER_0_METRICS_ONLY = os.environ.get("WORKER_0_METRICS_ONLY", "True").lower() == "true"
+NEURON_RT_FAKE_INSTANCE_TYPE = os.environ.get("NEURON_RT_FAKE_INSTANCE_TYPE")
 
 print("NUM_NODES", NUM_NODES)
 print("TP_DEGREE", TP_DEGREE)
 print("NUM_LAYERS", NUM_LAYERS)
 print("TRAIN_BATCH_SIZE", TRAIN_BATCH_SIZE)
 print("WORKER_0_METRICS_ONLY", WORKER_0_METRICS_ONLY)
+print("NEURON_RT_FAKE_INSTANCE_TYPE", NEURON_RT_FAKE_INSTANCE_TYPE)
+
+
+if NEURON_RT_FAKE_INSTANCE_TYPE is not None:
+    from axlearn.common.patch import patch_all
+    patch_all()
+
 
 PROCESS_INDEX = os.environ["NEURON_PJRT_PROCESS_INDEX"]
 jax.config.update("jax_logging_level", "DEBUG")

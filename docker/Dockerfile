@@ -95,6 +95,7 @@ RUN git clone https://github.com/apple/axlearn.git \
   && $PIP install -e '.[core,dev]'
 
 RUN $PIP install 'mlflow-skinny'
+RUN $PIP install 'redis'
 
 # For testing, we often need to make some local changes to AXLearn fuji.py (batchsize, num_layers)
 # COPY ./axlearn /neuron/axlearn
