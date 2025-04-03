@@ -13,7 +13,7 @@ from jax.sharding import PartitionSpec as P
 POD_UID = os.environ.get("POD_UID")
 NUM_NODES = int(os.environ.get("NUM_NODES", 2))
 ELASTIC_CACHE_URL = os.environ.get("ELASTIC_CACHE_URL")
-
+random.seed(1234)
 
 def _psum(x):
     return np.sum(x)
@@ -131,22 +131,16 @@ def patch_broadcast_one_to_all_with_redis(in_tree, is_source=None):
         retry_on_timeout=True,
         socket_keepalive=True,
     )
-    key = f"{POD_UID}:{in_tree}"
-
-    # may sync global device with the same key in short period, need to reset it
-    counter = r.get(key)
-    if counter is not None and int(counter.decode()) == NUM_NODES:
-        r.set(key, 0)
+    key = f"{POD_UID}:{in_tree}:{random.random()}"
 
     r.incr(key)
     while True:
         counter = int(r.get(key).decode())
         if counter == NUM_NODES:
-            r.expire(key, 5)
+            r.expire(key, 60 * 30)
             return in_tree
         elif counter > NUM_NODES:
             raise Exception(f"duplicate sync key used! {key} -> {counter}")
-        time.sleep(0.1)
 
 
 def patch_all():
