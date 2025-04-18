@@ -28,6 +28,7 @@ from axlearn.experiments.text.gpt.common import mesh_shape_from_axes
 
 NUM_NODES = int(os.environ.get("NUM_NODES", 2))
 TP_DEGREE = int(os.environ.get("TP_DEGREE", 4))
+DP_DEGREE = int(os.environ.get("DP_DEGREE", 1))
 TRAIN_BATCH_SIZE = int(os.environ.get("TRAIN_BATCH_SIZE", NUM_NODES * 64 // TP_DEGREE))
 NUM_LAYERS = int(os.environ.get("NUM_LAYERS", 8))
 SAVE_EVERY_N_STEPS = int(os.environ.get("SAVE_EVERY_N_STEPS", 10))
@@ -39,6 +40,7 @@ NEURON_RT_FAKE_INSTANCE_TYPE = os.environ.get("NEURON_RT_FAKE_INSTANCE_TYPE")
 
 print("NUM_NODES", NUM_NODES)
 print("TP_DEGREE", TP_DEGREE)
+print("DP_DEGREE", DP_DEGREE)
 print("NUM_LAYERS", NUM_LAYERS)
 print("TRAIN_BATCH_SIZE", TRAIN_BATCH_SIZE)
 print("WORKER_0_METRICS_ONLY", WORKER_0_METRICS_ONLY)
@@ -73,7 +75,7 @@ def update_trainer_config(trainer_config):
     trainer_config.set(max_step=MAX_STEPS)
     trainer_config.input.input_dispatcher.set(global_logical_batch_size=TRAIN_BATCH_SIZE)
 
-    # trainer_config.mesh_shape = mesh_shape_from_axes(data=1, fsdp=-1, model=4)
+    trainer_config.mesh_shape = mesh_shape_from_axes(data=DP_DEGREE, fsdp=-1, model=TP_DEGREE)
 
     return trainer_config
 
