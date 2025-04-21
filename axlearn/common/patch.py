@@ -147,10 +147,17 @@ def patch_broadcast_one_to_all_with_redis(in_tree, is_source=None):
             raise Exception(f"duplicate sync key used! {key} -> {counter}")
 
 
+def patch_get_platform_target(platform_target):
+    return "trn2"
+
+
 def patch_all():
     print("applying simulation patch...")
+    print("applying device sync patch...")
     jax.experimental.multihost_utils.broadcast_one_to_all = patch_broadcast_one_to_all_with_redis
 
     # patch nki jit otherwise it only works in trn2
-    jit = partial(nki.jit, mode="simulation")
-    nki.jit = jit
+    print("applying nki kernel patch...")
+    nki.compiler.backends.neuron.FrameworkKernel._get_platform_target = patch_get_platform_target
+    # jit = partial(nki.jit, mode="simulation")
+    # nki.jit = jit
