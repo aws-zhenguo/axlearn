@@ -9,11 +9,14 @@ import numpy as np
 import redis
 from jax.experimental.multihost_utils import host_local_array_to_global_array
 from jax.sharding import PartitionSpec as P
+import neuronxcc.nki as nki
+from functools import partial
 
 POD_UID = os.environ.get("POD_UID")
 NUM_NODES = int(os.environ.get("NUM_NODES", 2))
 ELASTIC_CACHE_URL = os.environ.get("ELASTIC_CACHE_URL")
 random.seed(1234)
+
 
 def _psum(x):
     return np.sum(x)
@@ -147,3 +150,7 @@ def patch_broadcast_one_to_all_with_redis(in_tree, is_source=None):
 def patch_all():
     print("applying simulation patch...")
     jax.experimental.multihost_utils.broadcast_one_to_all = patch_broadcast_one_to_all_with_redis
+
+    # patch nki jit otherwise it only works in trn2
+    jit = partial(nki.jit, mode="simulation")
+    nki.jit = jit
