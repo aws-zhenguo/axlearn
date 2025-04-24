@@ -36,7 +36,7 @@ else:
     FSDP_DEGREE = int(os.environ.get("FSDP_DEGREE", 32))
     DP_DEGREE = int(os.environ.get("DP_DEGREE", NUM_NODES * 64 / TP_DEGREE / FSDP_DEGREE))
 
-TRAIN_BATCH_SIZE = int(os.environ.get("TRAIN_BATCH_SIZE", 512))
+TRAIN_BATCH_SIZE = int(os.environ.get("TRAIN_BATCH_SIZE", NUM_NODES * 64 / TP_DEGREE))
 NUM_LAYERS = int(os.environ.get("NUM_LAYERS", 8))
 SAVE_EVERY_N_STEPS = int(os.environ.get("SAVE_EVERY_N_STEPS", 10))
 CHECKPOINTER_TYPE = os.environ.get("CHECKPOINTER_TYPE")
