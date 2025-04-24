@@ -28,8 +28,15 @@ from axlearn.experiments.text.gpt.common import mesh_shape_from_axes
 
 NUM_NODES = int(os.environ.get("NUM_NODES", 2))
 TP_DEGREE = int(os.environ.get("TP_DEGREE", 4))
-DP_DEGREE = int(os.environ.get("DP_DEGREE", 1))
-TRAIN_BATCH_SIZE = int(os.environ.get("TRAIN_BATCH_SIZE", NUM_NODES * 64 // TP_DEGREE))
+
+if os.environ.get("DP_DEGREE"):
+    DP_DEGREE = int(os.environ.get("DP_DEGREE", 1))
+    FSDP_DEGREE = int(os.environ.get("FSDP_DEGREE", NUM_NODES * 64 / TP_DEGREE / DP_DEGREE))
+else:
+    FSDP_DEGREE = int(os.environ.get("FSDP_DEGREE", 32))
+    DP_DEGREE = int(os.environ.get("DP_DEGREE", NUM_NODES * 64 / TP_DEGREE / FSDP_DEGREE))
+
+TRAIN_BATCH_SIZE = int(os.environ.get("TRAIN_BATCH_SIZE", 512))
 NUM_LAYERS = int(os.environ.get("NUM_LAYERS", 8))
 SAVE_EVERY_N_STEPS = int(os.environ.get("SAVE_EVERY_N_STEPS", 10))
 CHECKPOINTER_TYPE = os.environ.get("CHECKPOINTER_TYPE")
@@ -41,6 +48,7 @@ NEURON_RT_FAKE_INSTANCE_TYPE = os.environ.get("NEURON_RT_FAKE_INSTANCE_TYPE")
 print("NUM_NODES", NUM_NODES)
 print("TP_DEGREE", TP_DEGREE)
 print("DP_DEGREE", DP_DEGREE)
+print("FSDP_DEGREE", DP_DEGREE)
 print("NUM_LAYERS", NUM_LAYERS)
 print("TRAIN_BATCH_SIZE", TRAIN_BATCH_SIZE)
 print("WORKER_0_METRICS_ONLY", WORKER_0_METRICS_ONLY)
