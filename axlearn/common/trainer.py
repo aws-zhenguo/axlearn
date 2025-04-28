@@ -1053,30 +1053,32 @@ class SpmdTrainer(Module):
             A dict containing 'loss' and 'aux' outputs. If force_run_evals is a set,
             force run the evalers in the set and return 'evaler_summaries' output.
         """
-        with jax.profiler.StepTraceAnnotation("train", step_num=self.step):
-            run_with_xsc = self._xsc_check_policy and self._xsc_check_policy(self.step)
-            compiled_train_step_fn = self._get_compiled_train_step_fn(
-                trainer_state=self.trainer_state, input_batch=input_batch, with_xsc=run_with_xsc
-            )
-            # Run the compiled function.
-            self._trainer_state, outputs = compiled_train_step_fn(self.trainer_state, input_batch)
+        # with jax.profiler.StepTraceAnnotation("train", step_num=self.step):
+        #     run_with_xsc = self._xsc_check_policy and self._xsc_check_policy(self.step)
+        #     compiled_train_step_fn = self._get_compiled_train_step_fn(
+        #         trainer_state=self.trainer_state, input_batch=input_batch, with_xsc=run_with_xsc
+        #     )
+        #     # Run the compiled function.
+        #     self._trainer_state, outputs = compiled_train_step_fn(self.trainer_state, input_batch)
 
-        if self.step % 100 == 0 or 0 <= self.step <= 5:
-            self._step_log(
-                "loss=%s aux=%s",
-                outputs["loss"],
-                jax.tree.map(lambda x: x.item() if x.ndim == 0 else f"T{x.shape}", outputs["aux"]),
-            )
+        # if self.step % 100 == 0 or 0 <= self.step <= 5:
+        #     self._step_log(
+        #         "loss=%s aux=%s",
+        #         outputs["loss"],
+        #         jax.tree.map(lambda x: x.item() if x.ndim == 0 else f"T{x.shape}", outputs["aux"]),
+        #     )
 
-        self.summary_writer(self.step, {"loss": outputs["loss"], **outputs["summaries"]})
-        # Aggregate summaries across evalers.
-        evaler_summaries = self._run_eval(
-            train_summaries=outputs["summaries"], force_runs=force_run_evals
-        )
+        # self.summary_writer(self.step, {"loss": outputs["loss"], **outputs["summaries"]})
+        # # Aggregate summaries across evalers.
+        # evaler_summaries = self._run_eval(
+        #     train_summaries=outputs["summaries"], force_runs=force_run_evals
+        # )
 
         # Checkpointer policy will decide if we should save.
+        evaler_summaries = None
         self.save_checkpoint(evaler_summaries=evaler_summaries)
 
+        time.sleep(10 * 60)
         return_dict = {"loss": outputs["loss"], "aux": outputs["aux"]}
         # Returns evaler_summaries if force_run_evals is not None or empty set.
         if force_run_evals:

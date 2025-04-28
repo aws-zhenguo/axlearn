@@ -161,3 +161,14 @@ def patch_all():
     nki.compiler.backends.neuron.FrameworkKernel._get_platform_target = patch_get_platform_target
     # jit = partial(nki.jit, mode="simulation")
     # nki.jit = jit
+
+    # from axlearn.common.base_pytree_checkpoint_handler import BasePyTreeCheckpointHandler
+    # orbax.checkpoint._src.handlers.base_pytree_checkpoint_handler.BasePyTreeCheckpointHandler = BasePyTreeCheckpointHandler
+
+    # from axlearn.common import base_pytree_checkpoint_handler
+    # orbax.checkpoint._src.handlers.base_pytree_checkpoint_handler = base_pytree_checkpoint_handler
+    # import orbax.checkpoint as ocp
+    # from axlearn.common.pytree_checkpoint_handler import PyTreeCheckpointHandler, PyTreeSaveArgs
+
+    # ocp.PyTreeCheckpointHandler = PyTreeCheckpointHandler
+    # ocp.PyTreeSaveArgs = PyTreeSaveArgs

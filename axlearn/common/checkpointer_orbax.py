@@ -32,6 +32,7 @@ from axlearn.common.checkpointer import (
 from axlearn.common.config import config_class
 from axlearn.common.module import Module
 from axlearn.common.utils import Nested, Tensor, TensorSpec
+from axlearn.common.pytree_checkpoint_handler import PyTreeCheckpointHandler, PyTreeSaveArgs
 
 try:
     # The import also registers the checkpoint handlers.
@@ -249,7 +250,7 @@ class OrbaxCheckpointer(BaseCheckpointer):
                 "index": ocp.JsonCheckpointHandler(filename="index"),
                 # Note that this defaults to use_ocdb=True. Note also that custom `TypeHandler`s are
                 # ignored by `StandardCheckpointHandler`, so we use `PyTreeCheckpointHandler`.
-                "state": ocp.PyTreeCheckpointHandler(
+                "state": PyTreeCheckpointHandler(
                     save_concurrent_gb=cfg.max_concurrent_save_gb,
                     restore_concurrent_gb=cfg.max_concurrent_restore_gb,
                 ),
